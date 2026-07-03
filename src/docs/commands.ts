@@ -3,40 +3,23 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
 import { bold, cyan, dim, green, red, yellow } from '../colors.js';
-import type { Context, Scope } from '../context.js';
+import type { Context } from '../context.js';
 import { openInEditor } from '../editor.js';
 import { CliError } from '../errors.js';
 import { runAction } from '../run.js';
 import { renderTable } from '../table.js';
 import {
-  compareDocs,
+  diffDocs,
   initDoc,
-  linkDocs,
+  linkDoc,
   listDocs,
   readDoc,
   statDoc,
   syncDocs,
+  unlinkDoc,
   type DocInfo,
-  type DocTarget,
+  type SyncResult,
 } from './core.js';
-
-function parseTarget(value: string): DocTarget {
-  if (value === 'claude' || value === 'agents' || value === 'local') {
-    return value;
-  }
-  throw new CliError(`unknown target "${value}" (expected: claude, agents, local)`);
-}
-
-function scopeOf(opts: { global?: boolean }): Scope {
-  return opts.global ? 'global' : 'local';
-}
-
-function parseSource(value: string): 'claude' | 'agents' {
-  if (value === 'claude' || value === 'agents') {
-    return value;
-  }
-  throw new CliError(`unknown source "${value}" (expected: claude, agents)`);
-}
 
 export function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -51,9 +34,8 @@ export function formatMtime(d: Date): string {
   );
 }
 
-// FILE column drops the ' (global)' suffix — the SCOPE column carries the scope.
 export function fileCell(info: DocInfo): string {
-  return info.label.replace(/ \(global\)$/, '');
+  return info.label;
 }
 
 export function scopeCell(info: DocInfo): string {
@@ -68,47 +50,82 @@ export function statusCell(info: DocInfo): string {
   return info.exists ? green('ok') : dim('missing');
 }
 
+export function syncCell(info: DocInfo): string {
+  switch (info.sync) {
+    case 'hub':
+      return bold('hub');
+    case 'in-sync':
+      return green('in sync');
+    case 'diverged':
+      return yellow('diverged');
+    case 'linked':
+      return cyan('linked');
+    case 'missing':
+    case 'n/a':
+      return dim('-');
+  }
+}
+
+const DOC_HEADER = ['FILE', 'SCOPE', 'STATUS', 'SYNC', 'SIZE', 'LINES', 'MODIFIED'];
+
+export function docRow(info: DocInfo): string[] {
+  return [
+    fileCell(info),
+    scopeCell(info),
+    statusCell(info),
+    syncCell(info),
+    info.size !== undefined ? humanSize(info.size) : '',
+    info.lines !== undefined ? String(info.lines) : '',
+    info.mtime ? formatMtime(info.mtime) : '',
+  ];
+}
+
+/** Render the shared docs table (used by both `docs list` and `status`). */
+export function renderDocsTable(infos: DocInfo[]): string {
+  return renderTable(infos.map(docRow), { header: DOC_HEADER });
+}
+
+function syncResultCell(r: SyncResult): string {
+  switch (r.result) {
+    case 'synced':
+      return green('synced');
+    case 'unchanged':
+      return dim('unchanged');
+    case 'linked':
+      return cyan('linked, skipped');
+    case 'skipped-missing-source':
+      return yellow('skipped (source missing)');
+  }
+}
+
 export function buildDocsCommand(getCtx: () => Context): Command {
-  const docs = new Command('docs').description('Manage CLAUDE.md / AGENTS.md memory files');
+  const docs = new Command('docs').description(
+    'Manage AGENTS.md (hub) and per-agent instruction spokes',
+  );
 
   docs
     .command('list')
-    .description('List CLAUDE.md / AGENTS.md docs across scopes')
+    .description('List memory docs across agents and scopes')
+    .option('--all', 'show every doc, including undetected global docs')
     .option('--json', 'print raw JSON instead of a table')
     .action(
-      runAction((opts: { json?: boolean }) => {
-        const infos = listDocs(getCtx());
+      runAction((opts: { all?: boolean; json?: boolean }) => {
+        const infos = listDocs(getCtx(), { all: opts.all });
         if (opts.json) {
-          const data = infos.map((i) => ({
-            ...i,
-            mtime: i.mtime ? i.mtime.toISOString() : null,
-          }));
+          const data = infos.map((i) => ({ ...i, mtime: i.mtime ? i.mtime.toISOString() : null }));
           console.log(JSON.stringify(data, null, 2));
           return;
         }
-        const rows = infos.map((info) => [
-          fileCell(info),
-          scopeCell(info),
-          statusCell(info),
-          info.size !== undefined ? humanSize(info.size) : '',
-          info.lines !== undefined ? String(info.lines) : '',
-          info.mtime ? formatMtime(info.mtime) : '',
-        ]);
-        console.log(
-          renderTable(rows, {
-            header: ['FILE', 'SCOPE', 'STATUS', 'SIZE', 'LINES', 'MODIFIED'],
-          }),
-        );
+        console.log(renderDocsTable(infos));
       }),
     );
 
   docs
-    .command('show <target>')
-    .description('Print a doc\'s label, path, and contents')
-    .option('--global', 'target the global scope')
+    .command('show <key>')
+    .description("Print a doc's label, path, and contents")
     .action(
-      runAction((target: string, opts: { global?: boolean }) => {
-        const { info, content } = readDoc(getCtx(), parseTarget(target), scopeOf(opts));
+      runAction((key: string) => {
+        const { info, content } = readDoc(getCtx(), key);
         console.log(bold(info.label));
         console.log(dim(info.path));
         console.log('');
@@ -117,97 +134,110 @@ export function buildDocsCommand(getCtx: () => Context): Command {
     );
 
   docs
-    .command('init <target>')
+    .command('init <key>')
     .description('Create a doc from a starter template')
-    .option('--global', 'target the global scope')
     .option('-f, --force', 'overwrite an existing file')
     .action(
-      runAction((target: string, opts: { global?: boolean; force?: boolean }) => {
+      runAction((key: string, opts: { force?: boolean }) => {
         const ctx = getCtx();
-        const t = parseTarget(target);
-        const scope = scopeOf(opts);
-        // Detect an existing file before writing so we can report the right verb.
-        const before = statDoc(ctx, t, scope);
-        const info = initDoc(ctx, t, scope, { force: opts.force });
+        const before = statDoc(ctx, key); // validates the key and reports the right verb
+        const info = initDoc(ctx, key, { force: opts.force });
         console.log(`${green(before.exists ? 'overwrote' : 'created')} ${info.path}`);
       }),
     );
 
   docs
-    .command('edit <target>')
+    .command('edit <key>')
     .description('Open a doc in $EDITOR')
-    .option('--global', 'target the global scope')
     .action(
-      runAction((target: string, opts: { global?: boolean }) => {
-        const t = parseTarget(target);
-        const info = statDoc(getCtx(), t, scopeOf(opts));
+      runAction((key: string) => {
+        const info = statDoc(getCtx(), key);
         if (!info.exists) {
-          throw new CliError(`not found: ${info.path} (create it with "agman docs init ${t}")`);
+          throw new CliError(
+            `not found: ${info.path} (create it with \`agman docs init ${info.key}\`)`,
+          );
         }
         openInEditor(info.path);
       }),
     );
 
   docs
-    .command('diff')
-    .description('Diff the project CLAUDE.md against AGENTS.md')
+    .command('sync')
+    .description('Copy the hub (AGENTS.md) out to its spoke files')
+    .option('--from <key>', 'source doc to copy from (default: agents)')
+    .option('--to <key...>', 'explicit target docs (default: detected/existing spokes)')
     .action(
-      runAction(() => {
-        const { a, b, same } = compareDocs(getCtx());
-        if (same) {
-          console.log(green('CLAUDE.md and AGENTS.md are identical'));
+      runAction((opts: { from?: string; to?: string[] }) => {
+        const results = syncDocs(getCtx(), { from: opts.from, to: opts.to });
+        if (results.length === 0) {
+          console.log(dim('nothing to sync (no spoke targets)'));
           return;
         }
-        const result = spawnSync('git', ['diff', '--no-index', '--', a.path, b.path], {
+        for (const r of results) {
+          console.log(`${syncResultCell(r)} ${r.path}`);
+        }
+        if (results.length > 1) {
+          const counts = results.reduce<Record<string, number>>((acc, r) => {
+            acc[r.result] = (acc[r.result] ?? 0) + 1;
+            return acc;
+          }, {});
+          const parts = Object.entries(counts).map(([k, n]) => `${n} ${k}`);
+          console.log(dim(`${results.length} targets: ${parts.join(', ')}`));
+        }
+      }),
+    );
+
+  docs
+    .command('link <key>')
+    .description('Symlink a spoke doc to the hub AGENTS.md')
+    .option('-f, --force', 'replace an existing regular file')
+    .action(
+      runAction((key: string, opts: { force?: boolean }) => {
+        const { linkPath } = linkDoc(getCtx(), key, { force: opts.force });
+        console.log(`${green('linked')} ${path.basename(linkPath)} → AGENTS.md`);
+      }),
+    );
+
+  docs
+    .command('unlink <key>')
+    .description('Replace a symlinked spoke with a real copy of the hub')
+    .action(
+      runAction((key: string) => {
+        const { path: p } = unlinkDoc(getCtx(), key);
+        console.log(`${green('materialized')} ${p}`);
+      }),
+    );
+
+  docs
+    .command('diff [key]')
+    .description('Diff a spoke doc against the hub AGENTS.md (default: claude)')
+    .action(
+      runAction((key: string | undefined) => {
+        const { hub, spoke, same } = diffDocs(getCtx(), key);
+        console.log(dim(`hub ${hub.path}  vs  spoke ${spoke.path}`));
+        if (same) {
+          console.log(green(`${spoke.label} matches ${hub.label}`));
+          return;
+        }
+        const result = spawnSync('git', ['diff', '--no-index', '--', hub.path, spoke.path], {
           stdio: 'inherit',
         });
         if (result.error) {
           // git is unavailable — fall back to a naive, set-based line diff.
           console.log(dim('(git not found; simple line diff)'));
-          const aLines = readFileSync(a.path, 'utf8').split('\n');
-          const bLines = readFileSync(b.path, 'utf8').split('\n');
-          const aSet = new Set(aLines);
-          const bSet = new Set(bLines);
-          for (const line of aSet) {
-            if (!bSet.has(line)) console.log(red(`- ${line}`));
+          const hubLines = new Set(readFileSync(hub.path, 'utf8').split('\n'));
+          const spokeLines = new Set(readFileSync(spoke.path, 'utf8').split('\n'));
+          for (const line of hubLines) {
+            if (!spokeLines.has(line)) console.log(red(`- ${line}`));
           }
-          for (const line of bSet) {
-            if (!aSet.has(line)) console.log(green(`+ ${line}`));
+          for (const line of spokeLines) {
+            if (!hubLines.has(line)) console.log(green(`+ ${line}`));
           }
           process.exitCode = 1;
           return;
         }
         // git exits 1 when the files differ; that is expected here (diff convention).
         process.exitCode = 1;
-      }),
-    );
-
-  docs
-    .command('link')
-    .description('Symlink one project doc to the other (AGENTS.md and CLAUDE.md)')
-    .option('--source <claude|agents>', 'file to keep as the real source of truth', 'claude')
-    .option('-f, --force', 'replace an existing regular file')
-    .action(
-      runAction((opts: { source: string; force?: boolean }) => {
-        const source = parseSource(opts.source);
-        const { linkPath, targetPath } = linkDocs(getCtx(), { source, force: opts.force });
-        console.log(`${green('linked')} ${path.basename(linkPath)} → ${path.basename(targetPath)}`);
-      }),
-    );
-
-  docs
-    .command('sync')
-    .description('Copy one project doc\'s contents over the other')
-    .requiredOption('--source <claude|agents>', 'file to copy contents from')
-    .action(
-      runAction((opts: { source: string }) => {
-        const source = parseSource(opts.source);
-        const { fromPath, toPath, changed } = syncDocs(getCtx(), { source });
-        if (changed) {
-          console.log(`${green('synced')} ${path.basename(fromPath)} → ${path.basename(toPath)}`);
-        } else {
-          console.log(dim('already in sync'));
-        }
       }),
     );
 

@@ -1,58 +1,102 @@
-import fs from 'node:fs';
 import { Command } from 'commander';
-import { bold, cyan, dim, yellow } from './colors.js';
+import { AGENTS, detectAgents, type AgentId } from './agents/registry.js';
+import { bold, cyan, dim, green, yellow } from './colors.js';
 import type { Context } from './context.js';
-import { fileCell, formatMtime, humanSize, scopeCell, statusCell } from './docs/commands.js';
-import { listDocs, type DocInfo } from './docs/core.js';
+import { renderDocsTable } from './docs/commands.js';
+import { docSpecs, listDocs, statDoc, type DocInfo } from './docs/core.js';
 import { runAction } from './run.js';
 import { listSkills, type SkillInfo } from './skills/core.js';
 import { renderTable } from './table.js';
 
-const MAX_SKILLS_SHOWN = 15;
-const DESC_WIDTH = 50;
+export interface AgentStatus {
+  id: AgentId;
+  name: string;
+  detected: boolean;
+  instruction: {
+    mode: 'agents-native' | 'copy' | 'config';
+    docKey: string | null;
+    // agents-native → 'native'; copy/config → spoke sync state (missing hub → 'no-hub')
+    state: 'native' | 'in-sync' | 'linked' | 'diverged' | 'missing' | 'no-hub';
+  };
+  skillCount: number; // enabled skills visible to this agent
+}
 
 export interface StatusReport {
   globalRoot: string;
   projectRoot: string;
-  skills: SkillInfo[];
+  home: string;
+  agents: AgentStatus[];
   docs: DocInfo[];
+  skills: SkillInfo[];
+  disabledCount: number;
   shadowedCount: number;
-  docsDiffer: boolean; // true iff project CLAUDE.md AND AGENTS.md both exist with different content
+  hubExists: boolean;
 }
 
-/** Locate a doc in a report by target + scope (order-independent). */
-function findDoc(docs: DocInfo[], target: DocInfo['target'], scope: DocInfo['scope']): DocInfo | undefined {
-  return docs.find((d) => d.target === target && d.scope === scope);
-}
-
-// Read both project docs and compare when both exist; never throws (a status
-// overview should degrade gracefully rather than blow up on a read error).
-function computeDocsDiffer(docs: DocInfo[]): boolean {
-  const claude = findDoc(docs, 'claude', 'local');
-  const agents = findDoc(docs, 'agents', 'local');
-  if (!claude?.exists || !agents?.exists) return false;
-  try {
-    return fs.readFileSync(claude.path, 'utf8') !== fs.readFileSync(agents.path, 'utf8');
-  } catch {
-    return false;
+/** Map an agent to the sync state of its spoke doc (copy/config agents only). */
+function instructionState(
+  ctx: Context,
+  agentId: AgentId,
+  docKey: string | null,
+  hubExists: boolean,
+): AgentStatus['instruction']['state'] {
+  if (!hubExists || docKey === null) return 'no-hub';
+  switch (statDoc(ctx, docKey).sync) {
+    case 'linked':
+      return 'linked';
+    case 'in-sync':
+      return 'in-sync';
+    case 'diverged':
+      return 'diverged';
+    default:
+      return 'missing'; // 'missing' / (unexpected) 'n/a' both surface as missing
   }
 }
 
 export function gatherStatus(ctx: Context): StatusReport {
+  const detected = new Set(detectAgents(ctx));
   const skills = listSkills(ctx);
   const docs = listDocs(ctx);
+  const hubExists = statDoc(ctx, 'agents').exists;
+
+  // spoke key per copy/config agent, e.g. claude-code → 'claude'.
+  const spokeKeyByAgent = new Map<AgentId, string>();
+  for (const spec of docSpecs(ctx)) {
+    if (spec.role === 'spoke' && spec.agentId !== null) {
+      spokeKeyByAgent.set(spec.agentId, spec.key);
+    }
+  }
+
+  const agents: AgentStatus[] = AGENTS.map((agent) => {
+    const mode = agent.instructionMode;
+    let docKey: string | null = null;
+    let state: AgentStatus['instruction']['state'];
+    if (mode === 'agents-native') {
+      state = 'native';
+    } else {
+      docKey = spokeKeyByAgent.get(agent.id) ?? null;
+      state = instructionState(ctx, agent.id, docKey, hubExists);
+    }
+    return {
+      id: agent.id,
+      name: agent.name,
+      detected: detected.has(agent.id),
+      instruction: { mode, docKey, state },
+      skillCount: skills.filter((s) => s.enabled && s.visibleTo.includes(agent.id)).length,
+    };
+  });
+
   return {
     globalRoot: ctx.globalRoot,
     projectRoot: ctx.projectRoot,
-    skills,
+    home: ctx.home,
+    agents,
     docs,
+    skills,
+    disabledCount: skills.filter((s) => !s.enabled).length,
     shadowedCount: skills.filter((s) => s.shadowed).length,
-    docsDiffer: computeDocsDiffer(docs),
+    hubExists,
   };
-}
-
-function truncateDescription(s: string): string {
-  return s.length > DESC_WIDTH ? s.slice(0, DESC_WIDTH) + '…' : s;
 }
 
 /** Prefix every line of a rendered block with two spaces. */
@@ -63,92 +107,101 @@ function indent(block: string): string {
     .join('\n');
 }
 
-function printSkills(report: StatusReport): void {
-  const localCount = report.skills.filter((s) => s.scope === 'local').length;
-  const globalCount = report.skills.filter((s) => s.scope === 'global').length;
-  let summary = `local ${localCount} · global ${globalCount}`;
-  if (report.shadowedCount > 0) {
-    summary += yellow(`, ${report.shadowedCount} shadowed`);
-  }
-  console.log(`${bold('Skills')}  ${summary}`);
-
-  if (report.skills.length === 0) {
-    console.log(indent(dim('no skills — create one with: agman skills create <name>')));
-    return;
-  }
-
-  const shown = report.skills.slice(0, MAX_SKILLS_SHOWN);
-  const rows = shown.map((s) => {
-    const nameCell = s.name + (s.shadowed ? ' ' + yellow('(shadowed)') : '');
-    const scopeC = s.scope === 'local' ? cyan('local') : dim('global');
-    const descCell = dim(!s.hasSkillMd ? '(no SKILL.md)' : truncateDescription(s.description));
-    return [nameCell, scopeC, descCell];
-  });
-  console.log(indent(renderTable(rows)));
-  if (report.skills.length > MAX_SKILLS_SHOWN) {
-    console.log(indent(dim(`… and ${report.skills.length - MAX_SKILLS_SHOWN} more`)));
+function instructionCell(st: AgentStatus, labelByKey: Map<string, string>): string {
+  const ins = st.instruction;
+  if (ins.state === 'native') return green('AGENTS.md (native)');
+  const label = (ins.docKey && labelByKey.get(ins.docKey)) || 'spoke';
+  switch (ins.state) {
+    case 'in-sync':
+      return green(`${label} ✓ in sync`);
+    case 'linked':
+      return cyan(`${label} → AGENTS.md`);
+    case 'diverged':
+      return yellow(`${label} diverged`);
+    case 'missing':
+      return dim(`${label} missing`);
+    case 'no-hub':
+      return dim('AGENTS.md missing');
+    default:
+      return dim(label);
   }
 }
 
-function printDocs(report: StatusReport): void {
-  console.log('');
-  console.log(bold('Docs'));
-  const rows = report.docs.map((info) => [
-    fileCell(info),
-    scopeCell(info),
-    statusCell(info),
-    info.size !== undefined ? humanSize(info.size) : '',
-    info.lines !== undefined ? String(info.lines) : '',
-    info.mtime ? formatMtime(info.mtime) : '',
+function printAgents(report: StatusReport, ctx: Context): void {
+  console.log(bold('Agents'));
+  const labelByKey = new Map(docSpecs(ctx).map((s) => [s.key, s.label]));
+  const rows = report.agents.map((a) => [
+    a.name,
+    a.detected ? green('yes') : dim('no'),
+    instructionCell(a, labelByKey),
+    a.skillCount > 0 ? String(a.skillCount) : dim('0'),
   ]);
-  console.log(indent(renderTable(rows)));
+  console.log(
+    indent(renderTable(rows, { header: ['AGENT', 'DETECTED', 'INSTRUCTIONS', 'SKILLS'] })),
+  );
+}
+
+function printDocs(report: StatusReport): void {
+  console.log(bold('Docs'));
+  console.log(indent(renderDocsTable(report.docs)));
+}
+
+function printSkills(report: StatusReport): void {
+  const enabled = report.skills.filter((s) => s.enabled).length;
+  let summary = `enabled ${enabled} · disabled ${report.disabledCount}`;
+  if (report.shadowedCount > 0) {
+    summary += yellow(` · ${report.shadowedCount} shadowed`);
+  }
+  console.log(`${bold('Skills')}  ${summary}`);
+  console.log(indent(dim('run: agman skills list')));
 }
 
 function printTips(report: StatusReport): void {
   const tips: string[] = [];
-  const claude = findDoc(report.docs, 'claude', 'local');
-  const agents = findDoc(report.docs, 'agents', 'local');
-  if (!claude?.exists) tips.push(dim('tip: agman docs init claude'));
-  if (!agents?.exists) tips.push(dim('tip: agman docs init agents'));
-  if (report.docsDiffer) {
-    tips.push(
-      yellow('CLAUDE.md and AGENTS.md differ') +
-        dim(' — inspect: agman docs diff · reconcile: agman docs sync --source claude'),
-    );
+  if (!report.hubExists) {
+    tips.push(dim('tip: agman docs init agents'));
+  }
+  if (report.agents.some((a) => a.instruction.state === 'diverged')) {
+    tips.push(yellow('spokes diverged') + dim(' — agman docs diff <key> · agman docs sync'));
+  }
+  const starved = report.agents.filter((a) => a.detected && a.skillCount === 0).map((a) => a.name);
+  if (starved.length > 0) {
+    tips.push(dim(`no skills visible to: ${starved.join(', ')}`));
   }
   if (tips.length === 0) return;
   console.log('');
   for (const tip of tips) console.log(tip);
 }
 
-function printHuman(report: StatusReport): void {
+function printHuman(report: StatusReport, ctx: Context): void {
   console.log(`${dim('project')}  ${report.projectRoot}`);
   console.log(`${dim('global ')}  ${report.globalRoot}`);
   console.log('');
-  printSkills(report);
+  printAgents(report, ctx);
+  console.log('');
   printDocs(report);
+  console.log('');
+  printSkills(report);
   printTips(report);
 }
 
 function printJson(report: StatusReport): void {
-  const docs = report.docs.map((d) => ({
-    ...d,
-    mtime: d.mtime ? d.mtime.toISOString() : null,
-  }));
+  const docs = report.docs.map((d) => ({ ...d, mtime: d.mtime ? d.mtime.toISOString() : null }));
   console.log(JSON.stringify({ ...report, docs }, null, 2));
 }
 
 export function buildStatusCommand(getCtx: () => Context): Command {
-  const cmd = new Command('status').description('Overview of skills and memory docs');
+  const cmd = new Command('status').description('Overview of agents, memory docs, and skills');
   cmd.option('--json', 'print raw JSON instead of a summary');
   cmd.action(
     runAction((opts: { json?: boolean }) => {
-      const report = gatherStatus(getCtx());
+      const ctx = getCtx();
+      const report = gatherStatus(ctx);
       if (opts.json) {
         printJson(report);
         return;
       }
-      printHuman(report);
+      printHuman(report, ctx);
     }),
   );
   return cmd;
