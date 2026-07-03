@@ -12,15 +12,18 @@ const LOCAL_REL = path.join('.claude', 'skills');
 let tmp: string;
 let globalRoot: string;
 let projectRoot: string;
+let home: string;
 let ctx: Context;
 
 beforeEach(() => {
   tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agman-status-')));
   globalRoot = path.join(tmp, 'ghome');
   projectRoot = path.join(tmp, 'proj');
+  home = path.join(tmp, 'home');
   fs.mkdirSync(globalRoot, { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(path.join(projectRoot, '.git'), { recursive: true });
-  ctx = { globalRoot, projectRoot, cwd: projectRoot };
+  ctx = { globalRoot, projectRoot, cwd: projectRoot, home };
 });
 
 afterEach(() => {
