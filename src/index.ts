@@ -7,6 +7,13 @@ import { buildDocsCommand } from './docs/commands.js';
 import { buildSkillsCommand } from './skills/commands.js';
 import { buildStatusCommand } from './status.js';
 
+// Exit quietly when a downstream reader (e.g. `head` or `less`) closes the pipe
+// early; otherwise Node throws an unhandled EPIPE 'error' event and dumps a trace.
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') process.exit(0);
+  throw err;
+});
+
 const pkg = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ) as { version: string; description: string };

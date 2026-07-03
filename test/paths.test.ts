@@ -23,6 +23,10 @@ describe('getGlobalRoot', () => {
     expect(getGlobalRoot({ CLAUDE_CONFIG_DIR: '/custom/claude' })).toBe('/custom/claude');
   });
 
+  it('resolves a relative CLAUDE_CONFIG_DIR to an absolute path', () => {
+    expect(getGlobalRoot({ CLAUDE_CONFIG_DIR: 'rel-dir' })).toBe(path.resolve('rel-dir'));
+  });
+
   it('falls back to ~/.claude when unset', () => {
     expect(getGlobalRoot({})).toBe(path.join(os.homedir(), '.claude'));
   });

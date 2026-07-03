@@ -5,7 +5,7 @@ import path from 'node:path';
 export function getGlobalRoot(env: NodeJS.ProcessEnv = process.env): string {
   const dir = env.CLAUDE_CONFIG_DIR;
   if (typeof dir === 'string' && dir.length > 0) {
-    return dir;
+    return path.resolve(dir);
   }
   return path.join(os.homedir(), '.claude');
 }

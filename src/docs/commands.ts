@@ -38,12 +38,12 @@ function parseSource(value: string): 'claude' | 'agents' {
   throw new CliError(`unknown source "${value}" (expected: claude, agents)`);
 }
 
-function humanSize(bytes: number): string {
+export function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-function formatMtime(d: Date): string {
+export function formatMtime(d: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
   return (
     `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
@@ -52,29 +52,20 @@ function formatMtime(d: Date): string {
 }
 
 // FILE column drops the ' (global)' suffix — the SCOPE column carries the scope.
-function fileCell(info: DocInfo): string {
+export function fileCell(info: DocInfo): string {
   return info.label.replace(/ \(global\)$/, '');
 }
 
-function scopeCell(info: DocInfo): string {
+export function scopeCell(info: DocInfo): string {
   return info.scope === 'global' ? dim('global') : cyan('local');
 }
 
-function statusCell(info: DocInfo): string {
+export function statusCell(info: DocInfo): string {
   if (info.isSymlink) {
     const target = info.symlinkTarget ?? '?';
     return info.exists ? cyan(`symlink → ${target}`) : yellow(`broken → ${target}`);
   }
   return info.exists ? green('ok') : dim('missing');
-}
-
-// Exit quietly when a downstream reader (e.g. `head` or `less`) closes the pipe
-// early; otherwise Node throws an unhandled EPIPE 'error' event and dumps a trace.
-function guardBrokenPipe(): void {
-  process.stdout.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EPIPE') process.exit(0);
-    throw err;
-  });
 }
 
 export function buildDocsCommand(getCtx: () => Context): Command {
@@ -86,7 +77,6 @@ export function buildDocsCommand(getCtx: () => Context): Command {
     .option('--json', 'print raw JSON instead of a table')
     .action(
       runAction((opts: { json?: boolean }) => {
-        guardBrokenPipe();
         const infos = listDocs(getCtx());
         if (opts.json) {
           const data = infos.map((i) => ({
@@ -118,7 +108,6 @@ export function buildDocsCommand(getCtx: () => Context): Command {
     .option('--global', 'target the global scope')
     .action(
       runAction((target: string, opts: { global?: boolean }) => {
-        guardBrokenPipe();
         const { info, content } = readDoc(getCtx(), parseTarget(target), scopeOf(opts));
         console.log(bold(info.label));
         console.log(dim(info.path));
