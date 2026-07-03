@@ -70,6 +70,7 @@ body {
   line-height: 1.5;
   color: var(--text);
   background: var(--bg);
+  overflow-x: hidden; /* wide tables scroll inside their .table-wrap, never the page */
 }
 
 .app-header {
@@ -78,7 +79,7 @@ body {
   padding: 20px 20px 8px;
   display: flex;
   align-items: baseline;
-  gap: 14px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
@@ -92,7 +93,10 @@ body {
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
-  word-break: break-all;
+  max-width: 45vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tabs {
@@ -126,6 +130,12 @@ body {
   border-bottom-color: var(--accent);
 }
 
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
 .main {
   max-width: 1100px;
   margin: 0 auto;
@@ -137,7 +147,8 @@ body {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 16px;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
+  overflow: hidden; /* clip flush tables to the rounded corners */
 }
 
 .section h2 {
@@ -163,9 +174,36 @@ body {
   color: var(--muted);
 }
 
+.dim {
+  color: var(--muted);
+}
+
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+}
+
+.link {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:hover {
+  filter: brightness(1.12);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 /* ---- tables ---- */
@@ -173,6 +211,23 @@ body {
 .table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+/* Tables bleed to the card edges so they read as one flush surface, with the
+   first/last cells re-inset to the card's 16px padding grid. */
+.section > .table-wrap {
+  margin: 0 -16px -16px;
+  border-top: 1px solid var(--border);
+}
+
+.section > .table-wrap th:first-child,
+.section > .table-wrap td:first-child {
+  padding-left: 16px;
+}
+
+.section > .table-wrap th:last-child,
+.section > .table-wrap td:last-child {
+  padding-right: 16px;
 }
 
 table {
@@ -184,42 +239,75 @@ table {
 th,
 td {
   text-align: left;
-  padding: 8px 10px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
-  vertical-align: top;
+  vertical-align: middle;
   white-space: nowrap;
 }
 
 th {
   color: var(--muted);
   font-weight: 600;
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.04em;
 }
 
 tbody tr:hover {
   background: var(--row-hover);
 }
 
-td.wrap {
-  white-space: normal;
-  min-width: 200px;
+tbody tr:last-child td {
+  border-bottom: none;
 }
 
-.count {
+td.wrap {
+  white-space: normal;
+  min-width: 184px;
+}
+
+.num {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- badges ---- */
+th.num,
+td.num {
+  text-align: right;
+}
+
+th.col-actions,
+td.col-actions {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
+}
+
+/* docs "파일" cell: strong filename over a shortened, ellipsised path */
+.doc-file {
+  font-weight: 600;
+}
+
+.doc-path {
+  display: block;
+  margin-top: 1px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- pills / badges (one unified system; class kept as .badge for e2e hooks) ---- */
 
 .badge {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 12px;
-  font-weight: 600;
-  line-height: 1.4;
+  font-weight: 500;
+  line-height: 1.5;
   white-space: nowrap;
 }
 
@@ -250,54 +338,94 @@ td.wrap {
 
 /* ---- buttons & forms ---- */
 
-button.btn {
+.btn {
   appearance: none;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  padding: 5px 10px;
-  border-radius: 7px;
+  height: 32px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
   border: 1px solid var(--border-strong);
   background: var(--panel-2);
   color: var(--text);
   cursor: pointer;
+  white-space: nowrap;
 }
 
-button.btn:hover {
+.btn:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-button.btn.primary {
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn-sm {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.btn.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text);
 }
 
-button.btn.primary:hover {
+.btn.primary:hover {
   color: var(--accent-text);
-  filter: brightness(1.05);
+  filter: brightness(1.06);
 }
 
-button.btn.danger:hover {
+/* quiet destructive: red text, borderless until hover */
+.btn.danger {
+  background: transparent;
+  border-color: transparent;
+  color: var(--badge-red-fg);
+}
+
+.btn.danger:hover {
+  background: transparent;
   border-color: var(--badge-red-fg);
   color: var(--badge-red-fg);
 }
 
-button.btn:disabled {
+.btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
 .row-actions {
   display: flex;
-  gap: 6px;
+  gap: 4px;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .form-row {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: flex-end;
   flex-wrap: wrap;
 }
@@ -309,9 +437,10 @@ button.btn:disabled {
 }
 
 .field label {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
   font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 input[type='text'],
@@ -325,6 +454,11 @@ textarea {
   padding: 6px 8px;
 }
 
+input[type='text'],
+select {
+  height: 32px;
+}
+
 input[type='text']:focus,
 select:focus,
 textarea:focus {
@@ -333,10 +467,11 @@ textarea:focus {
 }
 
 .checkbox {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 13px;
+  height: 32px;
 }
 
 .summary-grid {
@@ -349,13 +484,14 @@ textarea:focus {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 12px;
+  padding: 12px 14px;
 }
 
 .stat .label {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.03em;
 }
 
 .stat .value {
@@ -365,6 +501,18 @@ textarea:focus {
   margin-top: 2px;
 }
 
+.stat .value.ok {
+  color: var(--badge-green-fg);
+}
+
+.stat .value.bad {
+  color: var(--badge-red-fg);
+}
+
+.stat .value.warn {
+  color: var(--badge-amber-fg);
+}
+
 .tips {
   margin: 0;
   padding-left: 18px;
@@ -372,7 +520,7 @@ textarea:focus {
 }
 
 .tips li {
-  margin: 2px 0;
+  margin: 4px 0;
 }
 
 /* ---- toasts ---- */
@@ -510,6 +658,12 @@ textarea:focus {
 
 .icon-btn:hover {
   color: var(--text);
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .empty {

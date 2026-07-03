@@ -29,6 +29,34 @@ function badge(text, cls) {
   return el('span', { class: `badge badge-${cls}`, text });
 }
 
+// dim em-dash placeholder for empty cells
+function emDash() {
+  return el('span', { class: 'dim', text: '—' });
+}
+
+// Shorten an absolute path for display: repo-relative under projectRoot,
+// `<global>/…` under globalRoot, `~/…` under home. Order matters because
+// projectRoot/globalRoot can sit under home.
+function shortenPath(p, status) {
+  if (!p || !status) return p || '';
+  const { projectRoot, globalRoot, home } = status;
+  if (projectRoot && (p === projectRoot || p.startsWith(projectRoot + '/'))) {
+    return p.slice(projectRoot.length).replace(/^\/+/, '') || '.';
+  }
+  if (globalRoot && (p === globalRoot || p.startsWith(globalRoot + '/'))) {
+    return '<global>' + p.slice(globalRoot.length);
+  }
+  if (home && (p === home || p.startsWith(home + '/'))) {
+    return '~' + p.slice(home.length);
+  }
+  return p;
+}
+
+// A link-styled button that switches to another tab (used by dashboard tips).
+function tabLink(text, tab) {
+  return el('button', { class: 'link', type: 'button', text, onclick: () => setTab(tab) });
+}
+
 function field(label, input) {
   return el('div', { class: 'field' }, el('label', { text: label }), input);
 }
@@ -49,6 +77,13 @@ function selectEl(options, value) {
   return sel;
 }
 
+// Headers may be plain strings or { text, cls } for alignment (e.g. numeric
+// columns get cls:'num', the actions column gets cls:'col-actions').
+function headerCell(h) {
+  if (typeof h === 'string') return el('th', { text: h });
+  return el('th', { class: h.cls, text: h.text });
+}
+
 function tableWrap(headers, rows) {
   return el(
     'div',
@@ -56,18 +91,18 @@ function tableWrap(headers, rows) {
     el(
       'table',
       {},
-      el('thead', {}, el('tr', {}, ...headers.map((h) => el('th', { text: h })))),
+      el('thead', {}, el('tr', {}, ...headers.map(headerCell))),
       el('tbody', {}, ...rows),
     ),
   );
 }
 
-function stat(label, value) {
+function stat(label, value, tone) {
   return el(
     'div',
     { class: 'stat' },
     el('div', { class: 'label', text: label }),
-    el('div', { class: 'value', text: value }),
+    el('div', { class: tone ? `value ${tone}` : 'value', text: value }),
   );
 }
 
@@ -151,9 +186,9 @@ function openModal({ title, body, footer }) {
 
 function instructionBadge(state) {
   const map = {
-    native: ['AGENTS.md 직접 읽음', 'green'],
+    native: ['AGENTS.md ✓', 'green'],
     'in-sync': ['동기화됨', 'green'],
-    linked: ['심링크', 'cyan'],
+    linked: ['심링크 → AGENTS.md', 'cyan'],
     diverged: ['불일치', 'amber'],
     missing: ['파일 없음', 'gray'],
     'no-hub': ['허브 없음', 'gray'],
@@ -173,14 +208,14 @@ async function renderDashboard(main) {
       el('td', { text: a.name }),
       el('td', {}, a.detected ? badge('감지됨', 'green') : badge('미감지', 'gray')),
       el('td', {}, instructionBadge(a.instruction.state)),
-      el('td', { class: 'count', text: String(a.skillCount) }),
+      el('td', { class: 'num', text: String(a.skillCount) }),
     ),
   );
   const agentsSection = el(
     'section',
     { class: 'section' },
     el('h2', { text: '에이전트' }),
-    tableWrap(['에이전트', '감지', '지시문 상태', '스킬 수'], agentRows),
+    tableWrap(['에이전트', '감지', '지시문 상태', { text: '스킬 수', cls: 'num' }], agentRows),
   );
 
   const divergedDocs = status.docs.filter((d) => d.sync === 'diverged').length;
@@ -192,33 +227,56 @@ async function renderDashboard(main) {
     el(
       'div',
       { class: 'summary-grid' },
-      stat('허브(AGENTS.md)', status.hubExists ? '있음' : '없음'),
-      stat('불일치 문서', String(divergedDocs)),
+      stat('허브(AGENTS.md)', status.hubExists ? '정상' : '없음', status.hubExists ? 'ok' : 'bad'),
+      stat('불일치 문서', String(divergedDocs), divergedDocs > 0 ? 'warn' : null),
       stat('활성 스킬', String(enabledSkills)),
       stat('비활성 스킬', String(status.disabledCount)),
     ),
   );
 
-  const tips = [];
+  const tipItems = [];
   if (!status.hubExists) {
-    tips.push('AGENTS.md 허브가 없습니다. 문서 탭에서 "허브 만들기"를 실행하세요.');
+    tipItems.push(
+      el('li', {}, 'AGENTS.md 허브가 없습니다. ', tabLink('문서 탭에서 허브 만들기', 'docs')),
+    );
   }
   if (divergedDocs > 0) {
-    tips.push(`${divergedDocs}개 문서가 허브와 불일치합니다. 문서 탭에서 동기화하세요.`);
+    tipItems.push(
+      el(
+        'li',
+        {},
+        `${divergedDocs}개 문서가 허브와 불일치합니다. `,
+        tabLink('문서 탭에서 동기화', 'docs'),
+      ),
+    );
   }
   const starved = status.agents.filter((a) => a.detected && a.skillCount === 0).map((a) => a.name);
   if (starved.length > 0) {
-    tips.push('스킬이 없는 감지된 에이전트: ' + starved.join(', '));
+    tipItems.push(
+      el(
+        'li',
+        {},
+        '스킬이 없는 감지된 에이전트: ' + starved.join(', ') + '. ',
+        tabLink('스킬 탭 열기', 'skills'),
+      ),
+    );
   }
   if (status.shadowedCount > 0) {
-    tips.push(`${status.shadowedCount}개 전역 스킬이 로컬 스킬에 가려져 있습니다.`);
+    tipItems.push(
+      el(
+        'li',
+        {},
+        `${status.shadowedCount}개 전역 스킬이 로컬 스킬에 가려져 있습니다. `,
+        tabLink('스킬 탭 열기', 'skills'),
+      ),
+    );
   }
   const tipsSection = el(
     'section',
     { class: 'section' },
     el('h2', { text: '팁' }),
-    tips.length > 0
-      ? el('ul', { class: 'tips' }, ...tips.map((t) => el('li', { text: t })))
+    tipItems.length > 0
+      ? el('ul', { class: 'tips' }, ...tipItems)
       : el('div', { class: 'muted', text: '특별한 문제가 없습니다.' }),
   );
 
@@ -234,32 +292,37 @@ function skillRow(s) {
     s.name,
     s.shadowed ? el('span', { class: 'badge badge-amber inline-tag', text: '가려짐' }) : null,
   );
-  const locCell = el('td', { class: 'mono', text: `${s.locationKey}:${s.scope}` });
-  const visCell = el('td', {
-    text: s.enabled && s.visibleTo.length > 0 ? s.visibleTo.join(', ') : '-',
-  });
+  const locCell = el('td', { class: 'mono', title: s.path, text: `${s.locationKey}:${s.scope}` });
+  const visible = s.enabled && s.visibleTo.length > 0 ? s.visibleTo.join(', ') : null;
+  const visCell = el('td', {}, visible !== null ? visible : emDash());
+  const isPlaceholder = !s.hasSkillMd || !s.description;
   const descCell = el('td', {
-    class: 'wrap',
+    class: isPlaceholder ? 'wrap muted' : 'wrap',
     text: s.hasSkillMd ? s.description || '(설명 없음)' : '(SKILL.md 없음)',
   });
   const statusCell = el('td', {}, s.enabled ? badge('활성', 'green') : badge('비활성', 'red'));
 
   const actions = el(
     'td',
-    {},
+    { class: 'col-actions' },
     el(
       'div',
       { class: 'row-actions' },
       el('button', {
-        class: 'btn',
+        class: 'btn btn-sm',
         type: 'button',
         text: s.enabled ? '비활성' : '활성',
         onclick: () => toggleSkill(s),
       }),
-      el('button', { class: 'btn', type: 'button', text: '편집', onclick: () => editSkill(s) }),
-      el('button', { class: 'btn', type: 'button', text: '복사', onclick: () => copySkillModal(s) }),
+      el('button', { class: 'btn btn-sm', type: 'button', text: '편집', onclick: () => editSkill(s) }),
       el('button', {
-        class: 'btn danger',
+        class: 'btn btn-sm',
+        type: 'button',
+        text: '복사',
+        onclick: () => copySkillModal(s),
+      }),
+      el('button', {
+        class: 'btn btn-sm danger',
         type: 'button',
         text: '삭제',
         onclick: () => deleteSkill(s),
@@ -421,7 +484,10 @@ async function renderSkills(main) {
     { class: 'section' },
     el('h2', { text: '스킬 목록' }),
     skills.length > 0
-      ? tableWrap(['이름', '위치', '보이는 에이전트', '설명', '상태', '작업'], skills.map(skillRow))
+      ? tableWrap(
+          ['이름', '위치', '보이는 에이전트', '설명', '상태', { text: '작업', cls: 'col-actions' }],
+          skills.map(skillRow),
+        )
       : el('div', { class: 'empty', text: '스킬이 없습니다.' }),
   );
 
@@ -436,24 +502,24 @@ function docStatusBadge(d) {
 }
 
 function docSyncBadge(d) {
+  if (d.sync === 'n/a') return emDash();
   const map = {
     hub: ['hub', 'blue'],
     'in-sync': ['동기화됨', 'green'],
     diverged: ['불일치', 'amber'],
     linked: ['심링크', 'cyan'],
     missing: ['없음', 'gray'],
-    'n/a': ['-', 'gray'],
   };
   const [text, cls] = map[d.sync] || [d.sync, 'gray'];
   return badge(text, cls);
 }
 
-function docRow(d) {
+function docRow(d, status) {
   const fileCell = el(
     'td',
     {},
-    el('div', { text: d.label }),
-    el('div', { class: 'mono muted', text: d.path }),
+    el('div', { class: 'doc-file', text: d.label }),
+    el('div', { class: 'doc-path', title: d.path, text: shortenPath(d.path, status) }),
   );
   const scopeCell = el(
     'td',
@@ -463,21 +529,36 @@ function docRow(d) {
   const actions = el('div', { class: 'row-actions' });
   if (d.exists) {
     actions.append(
-      el('button', { class: 'btn', type: 'button', text: '보기·편집', onclick: () => editDoc(d) }),
+      el('button', {
+        class: 'btn btn-sm',
+        type: 'button',
+        text: '보기·편집',
+        onclick: () => editDoc(d),
+      }),
     );
   } else {
     actions.append(
-      el('button', { class: 'btn', type: 'button', text: '만들기', onclick: () => initDoc(d.key) }),
+      el('button', {
+        class: 'btn btn-sm',
+        type: 'button',
+        text: '만들기',
+        onclick: () => initDoc(d.key),
+      }),
     );
   }
   if (d.role === 'spoke') {
     actions.append(
-      el('button', { class: 'btn', type: 'button', text: '차이 보기', onclick: () => diffDoc(d) }),
+      el('button', {
+        class: 'btn btn-sm',
+        type: 'button',
+        text: '차이 보기',
+        onclick: () => diffDoc(d),
+      }),
     );
     if (d.isSymlink) {
       actions.append(
         el('button', {
-          class: 'btn',
+          class: 'btn btn-sm',
           type: 'button',
           text: '링크 해제',
           onclick: () => unlinkDocAction(d),
@@ -485,7 +566,12 @@ function docRow(d) {
       );
     } else {
       actions.append(
-        el('button', { class: 'btn', type: 'button', text: '링크', onclick: () => linkDocAction(d) }),
+        el('button', {
+          class: 'btn btn-sm',
+          type: 'button',
+          text: '링크',
+          onclick: () => linkDocAction(d),
+        }),
       );
     }
   }
@@ -497,9 +583,13 @@ function docRow(d) {
     scopeCell,
     el('td', {}, docStatusBadge(d)),
     el('td', {}, docSyncBadge(d)),
-    el('td', { class: 'count', text: d.size !== undefined && d.size !== null ? humanSize(d.size) : '-' }),
-    el('td', { class: 'mono', text: d.mtime ? formatMtime(d.mtime) : '-' }),
-    el('td', {}, actions),
+    el(
+      'td',
+      { class: 'num' },
+      d.size !== undefined && d.size !== null ? humanSize(d.size) : emDash(),
+    ),
+    el('td', { class: 'num mono' }, d.mtime ? formatMtime(d.mtime) : emDash()),
+    el('td', { class: 'col-actions' }, actions),
   );
 }
 
@@ -657,23 +747,22 @@ function refreshToolSelect(tools) {
 }
 
 async function renderDocs(main) {
-  const [docs, refreshTools] = await Promise.all([
+  const [docs, refreshTools, status] = await Promise.all([
     api('GET', '/api/docs'),
     api('GET', '/api/docs/refresh-tools'),
+    api('GET', '/api/status'),
   ]);
+  setProjectPath(status.projectRoot);
   const hub = docs.find((d) => d.role === 'hub');
   const hubExists = Boolean(hub && hub.exists);
 
-  const actions = [
-    el('button', {
-      class: 'btn primary',
-      type: 'button',
-      text: '허브 → 전체 동기화',
-      onclick: syncAll,
-    }),
-  ];
+  const tools = (refreshTools && refreshTools.tools) || [];
+  const toolSelect = refreshToolSelect(tools);
+
+  // Toolbar: [허브 만들기?] · grouped [tool + AI 갱신] · separated primary sync.
+  const toolbar = el('div', { class: 'toolbar' });
   if (!hubExists) {
-    actions.push(
+    toolbar.append(
       el('button', {
         class: 'btn',
         type: 'button',
@@ -682,29 +771,42 @@ async function renderDocs(main) {
       }),
     );
   }
-
-  const tools = (refreshTools && refreshTools.tools) || [];
-  const toolSelect = refreshToolSelect(tools);
-  actions.push(
-    toolSelect,
+  toolbar.append(
+    el(
+      'div',
+      { class: 'toolbar-group' },
+      toolSelect,
+      el('button', {
+        class: 'btn',
+        type: 'button',
+        text: 'AI로 허브 갱신',
+        onclick: () => refreshHub(tools, toolSelect.value),
+      }),
+    ),
     el('button', {
-      class: 'btn',
+      class: 'btn primary',
       type: 'button',
-      text: 'AI로 허브 갱신',
-      onclick: () => refreshHub(tools, toolSelect.value),
+      text: '허브 → 전체 동기화',
+      onclick: syncAll,
     }),
   );
 
   const section = el(
     'section',
     { class: 'section' },
-    el(
-      'div',
-      { class: 'section-head' },
-      el('h2', { text: '문서' }),
-      el('div', { class: 'row-actions' }, ...actions),
+    el('div', { class: 'section-head' }, el('h2', { text: '문서' }), toolbar),
+    tableWrap(
+      [
+        '파일',
+        '스코프',
+        '상태',
+        'SYNC',
+        { text: '크기', cls: 'num' },
+        { text: '수정', cls: 'num' },
+        { text: '작업', cls: 'col-actions' },
+      ],
+      docs.map((d) => docRow(d, status)),
     ),
-    tableWrap(['파일', '스코프', '상태', 'SYNC', '크기', '수정', '작업'], docs.map(docRow)),
   );
   main.replaceChildren(section);
 }
@@ -715,7 +817,9 @@ const views = { dashboard: renderDashboard, skills: renderSkills, docs: renderDo
 let current = 'dashboard';
 
 function setProjectPath(p) {
-  document.getElementById('project-path').textContent = p;
+  const node = document.getElementById('project-path');
+  node.textContent = p || '';
+  node.title = p || '';
 }
 
 async function render() {
