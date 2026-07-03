@@ -6,6 +6,7 @@ import { createContext, type Context } from './context.js';
 import { buildDocsCommand } from './docs/commands.js';
 import { buildSkillsCommand } from './skills/commands.js';
 import { buildStatusCommand } from './status.js';
+import { buildUiCommand } from './ui/commands.js';
 
 // Exit quietly when a downstream reader (e.g. `head` or `less`) closes the pipe
 // early; otherwise Node throws an unhandled EPIPE 'error' event and dumps a trace.
@@ -31,6 +32,7 @@ const getCtx = (): Context => (ctx ??= createContext({ cwd: program.opts().cwd }
 program.addCommand(buildSkillsCommand(getCtx));
 program.addCommand(buildDocsCommand(getCtx));
 program.addCommand(buildStatusCommand(getCtx));
+program.addCommand(buildUiCommand(getCtx));
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(red(`error: ${err?.message ?? err}`));

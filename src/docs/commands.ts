@@ -20,6 +20,7 @@ import {
   type DocInfo,
   type SyncResult,
 } from './core.js';
+import { runRefresh } from './refresh.js';
 
 export function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -238,6 +239,34 @@ export function buildDocsCommand(getCtx: () => Context): Command {
         }
         // git exits 1 when the files differ; that is expected here (diff convention).
         process.exitCode = 1;
+      }),
+    );
+
+  docs
+    .command('refresh')
+    .description('Update the hub doc using an installed AI agent CLI (claude/codex/gemini)')
+    .option('--tool <id>', 'which agent CLI to use (claude-code, codex, gemini-cli)')
+    .option('--doc <key>', 'which doc to refresh (default: agents)')
+    .option('--dry-run', 'print the command that would run without executing it')
+    .action(
+      runAction((opts: { tool?: string; doc?: string; dryRun?: boolean }) => {
+        const ctx = getCtx();
+        const result = runRefresh(ctx, {
+          tool: opts.tool,
+          doc: opts.doc,
+          dryRun: opts.dryRun,
+          onSpawn: (tool) => console.log(dim(`running ${tool.bin} in ${ctx.projectRoot}…`)),
+        });
+        if (!result.ran) {
+          console.log(dim('would run: ') + result.command);
+          return;
+        }
+        if (result.exitCode === 0) {
+          console.log(green('refresh complete'));
+          console.log(dim('review with: agman docs diff · propagate with: agman docs sync'));
+          return;
+        }
+        throw new CliError(`refresh tool exited with code ${result.exitCode}`);
       }),
     );
 

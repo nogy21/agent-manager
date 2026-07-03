@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agman</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">agman</div>
+      <div class="project-path" id="project-path"></div>
+    </header>
+
+    <nav class="tabs" id="tabs">
+      <button class="tab" data-tab="dashboard" type="button">대시보드</button>
+      <button class="tab" data-tab="skills" type="button">스킬</button>
+      <button class="tab" data-tab="docs" type="button">문서</button>
+    </nav>
+
+    <main id="main" class="main"></main>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+
+    <div id="modal-root"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

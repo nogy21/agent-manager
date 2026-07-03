@@ -4,9 +4,10 @@ Guidance for Claude Code when working in this repository.
 
 ## Project overview
 
-`agman` is a TypeScript ESM CLI for managing Claude Code skills and memory
-documents (CLAUDE.md, CLAUDE.local.md, AGENTS.md) across the global (`~/.claude`)
-and per-project scopes.
+`agman` is a TypeScript ESM CLI for managing AI coding-agent skills and instruction
+docs — AGENTS.md (the cross-tool hub), CLAUDE.md, GEMINI.md, and their siblings — across
+the global (`~/.claude`) and per-project scopes. It knows six agents (Claude Code, OpenAI
+Codex, Cursor, GitHub Copilot, Gemini CLI, Windsurf) and also serves a local web dashboard.
 
 ## Commands
 
@@ -14,19 +15,28 @@ and per-project scopes.
 - `npm run typecheck` — type-check with `tsc --noEmit` (no emit).
 - `npm run build` — compile `src/` to `dist/` with `tsc`.
 - Run the built CLI: `node dist/index.js <command>` (e.g. `node dist/index.js status`,
-  `node dist/index.js skills list`, `node dist/index.js docs diff`). Use `-C <dir>` to run
-  as if started in another directory.
+  `node dist/index.js skills list`, `node dist/index.js docs list`,
+  `node dist/index.js docs refresh --dry-run`, `node dist/index.js ui`). Use `-C <dir>` to
+  run as if started in another directory.
 
 ## Architecture
 
 - **Context injection.** Core functions are pure over a `Context` ({ globalRoot,
-  projectRoot, cwd }) built in `src/context.ts` from `src/paths.ts`. They take `ctx`
+  projectRoot, cwd, home }) built in `src/context.ts` from `src/paths.ts`. They take `ctx`
   explicitly and never touch `process.cwd()` directly, which keeps them testable with
   temp-dir fixtures. Command layers resolve the context lazily through a `getCtx()`
   callback wired in `src/index.ts`.
+- **Data-driven agent registry.** `src/agents/registry.ts` is the single source of truth
+  for the six supported agents (`AGENTS: AgentDef[]`) and every skills location
+  (`skillsLocations`). Detection, doc roles, symlink-safety, and skill visibility are all
+  derived from this data — teach agman about a new tool by editing the table, not the call
+  sites. It is treated as read-only elsewhere.
 - **core / commands split.** Each feature has a `core.ts` (filesystem + domain logic,
   no commander) and a `commands.ts` (commander wiring, output formatting): `src/skills/`
-  and `src/docs/`. `src/status.ts` composes both cores into an overview.
+  and `src/docs/` (with `src/docs/refresh.ts` shelling out to an installed agent CLI to
+  rewrite the hub). `src/status.ts` composes the cores into the six-agent overview.
+- **Web dashboard.** `src/ui/` serves a local-only (127.0.0.1), token-protected dashboard
+  over `node:http` with no framework, reusing the same cores as the CLI. `agman ui` starts it.
 - **Shared utilities.** `src/frontmatter.ts` (SKILL.md YAML-ish frontmatter),
   `src/table.ts` (aligned columns), `src/colors.ts` (ANSI helpers), `src/run.ts`
   (`runAction` error boundary), `src/editor.ts` (`$EDITOR` launch), `src/errors.ts`
@@ -54,7 +64,10 @@ and per-project scopes.
   false while `isSymlink` stays true).
 - **`CLAUDE_CONFIG_DIR`** overrides the global root (`~/.claude`); a relative value is
   resolved to an absolute path against the process cwd.
-- **AGENTS.md is a synced copy of CLAUDE.md** in this repo (a real file, not a
-  symlink). After editing CLAUDE.md, regenerate it with
-  `node dist/index.js docs sync --source claude` and confirm with
-  `node dist/index.js docs diff`.
+- **AGENTS.md is the hub; CLAUDE.md is a synced spoke.** This repo keeps them identical
+  (both real files, not symlinks). After editing CLAUDE.md, push it back into the hub with
+  `node dist/index.js docs sync --from claude --to agents`; after editing AGENTS.md, fan it
+  out to the spokes with `node dist/index.js docs sync --from agents` (keys: claude, agents).
+  Either way, confirm with `node dist/index.js docs diff` (expect "CLAUDE.md matches
+  AGENTS.md"). Note `--from claude` alone targets sibling spokes, not the hub — reaching the
+  hub needs `--to agents`.

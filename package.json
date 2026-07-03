@@ -1,13 +1,14 @@
 {
   "name": "agent-manager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Manage Claude Code skills, CLAUDE.md and AGENTS.md across global and project scopes",
   "type": "module",
   "bin": {
     "agman": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "public"
   ],
   "engines": {
     "node": ">=18.17"
@@ -37,6 +38,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.10",
+    "playwright": "^1.61.1",
     "typescript": "^5.7.3",
     "vitest": "^3.0.4"
   }
