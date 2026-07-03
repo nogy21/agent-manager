@@ -602,8 +602,65 @@ async function syncAll() {
   }
 }
 
+// AI refresh is fire-and-forget on the server ("UI는 트리거만"); after triggering
+// we re-render the docs table on a timer so the rewritten hub shows up on its own.
+let docsRefreshTimer = null;
+
+function stopDocsRefreshPoll() {
+  if (docsRefreshTimer !== null) {
+    clearInterval(docsRefreshTimer);
+    docsRefreshTimer = null;
+  }
+}
+
+function startDocsRefreshPoll() {
+  stopDocsRefreshPoll();
+  const startedAt = Date.now();
+  docsRefreshTimer = setInterval(() => {
+    if (current !== 'docs' || Date.now() - startedAt > 60000) {
+      stopDocsRefreshPoll();
+      return;
+    }
+    render();
+  }, 5000);
+}
+
+async function refreshHub(tools, toolId) {
+  const installed = tools.filter((t) => t.installed);
+  if (installed.length === 0) {
+    toast(tools.length > 0 ? tools[0].installHint : '설치된 AI 에이전트 CLI가 없습니다.', 'err');
+    return;
+  }
+  const chosen = tools.find((t) => t.id === toolId) || installed[0];
+  try {
+    await api('POST', '/api/docs/refresh', { tool: chosen.id });
+    toast(`백그라운드에서 ${chosen.bin} 실행됨 — 완료되면 문서 표가 갱신됩니다`);
+    startDocsRefreshPoll();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+function refreshToolSelect(tools) {
+  const select = el('select', { id: 'refresh-tool' });
+  let firstInstalled = null;
+  for (const t of tools) {
+    const label = `${t.bin} (${t.installed ? '설치됨' : '미설치'})`;
+    const opt = el('option', { value: t.id, text: label, disabled: !t.installed });
+    if (t.installed && firstInstalled === null) {
+      firstInstalled = t.id;
+      opt.selected = true;
+    }
+    select.append(opt);
+  }
+  return select;
+}
+
 async function renderDocs(main) {
-  const docs = await api('GET', '/api/docs');
+  const [docs, refreshTools] = await Promise.all([
+    api('GET', '/api/docs'),
+    api('GET', '/api/docs/refresh-tools'),
+  ]);
   const hub = docs.find((d) => d.role === 'hub');
   const hubExists = Boolean(hub && hub.exists);
 
@@ -625,6 +682,18 @@ async function renderDocs(main) {
       }),
     );
   }
+
+  const tools = (refreshTools && refreshTools.tools) || [];
+  const toolSelect = refreshToolSelect(tools);
+  actions.push(
+    toolSelect,
+    el('button', {
+      class: 'btn',
+      type: 'button',
+      text: 'AI로 허브 갱신',
+      onclick: () => refreshHub(tools, toolSelect.value),
+    }),
+  );
 
   const section = el(
     'section',

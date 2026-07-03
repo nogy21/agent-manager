@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -15,6 +16,12 @@ import {
   syncDocs,
   unlinkDoc,
 } from '../docs/core.js';
+import {
+  buildRefreshPrompt,
+  detectRefreshTools,
+  REFRESH_TOOLS,
+  type RefreshTool,
+} from '../docs/refresh.js';
 import {
   copySkill,
   createSkill,
@@ -115,6 +122,35 @@ function reqQuery(query: URLSearchParams, key: string): string {
   return v;
 }
 
+// ---- docs AI-refresh tool selection (mirrors runRefresh's validation) ----
+
+// Resolve which agent CLI to launch. `requested` is an explicit tool id (must be
+// known and installed) or undefined (pick the first detected tool). PATH is read
+// at call time so the set of "installed" tools reflects the live process env.
+function pickRefreshTool(requested: string | undefined): RefreshTool {
+  const detected = detectRefreshTools(process.env);
+  if (requested !== undefined) {
+    const known = REFRESH_TOOLS.find((t) => t.id === requested);
+    if (!known) {
+      throw new CliError(
+        `unknown refresh tool "${requested}" (valid: ${REFRESH_TOOLS.map((t) => t.id).join(', ')})`,
+      );
+    }
+    if (!detected.some((t) => t.id === known.id)) {
+      throw new CliError(
+        `${known.id} is not on PATH. Install it with: ${known.installHint}. ` +
+          'If it is already installed, run it once so it is logged in.',
+      );
+    }
+    return known;
+  }
+  if (detected.length === 0) {
+    const hints = REFRESH_TOOLS.map((t) => `  - ${t.id}: ${t.installHint}`).join('\n');
+    throw new CliError(`no supported AI agent CLI found on PATH. Install one:\n${hints}`);
+  }
+  return detected[0];
+}
+
 // ---- routing table: "METHOD /path" → handler ----
 
 const routes: Record<string, RouteHandler> = {
@@ -186,6 +222,42 @@ const routes: Record<string, RouteHandler> = {
       same,
       hub: { label: hub.label, content: fs.readFileSync(hub.path, 'utf8') },
       spoke: { label: spoke.label, content: fs.readFileSync(spoke.path, 'utf8') },
+    };
+  },
+
+  'GET /api/docs/refresh-tools': () => {
+    const installed = new Set(detectRefreshTools(process.env).map((t) => t.id));
+    return {
+      tools: REFRESH_TOOLS.map((t) => ({
+        id: t.id,
+        bin: t.bin,
+        installed: installed.has(t.id),
+        installHint: t.installHint,
+      })),
+    };
+  },
+  // Fire-and-forget: spawn the agent CLI detached and return immediately ("UI는
+  // 트리거만"). The client polls the docs table to see the rewritten hub.
+  'POST /api/docs/refresh': ({ ctx, body }) => {
+    const tool = pickRefreshTool(optStr(body, 'tool'));
+    const args = tool.buildArgs(buildRefreshPrompt(ctx, 'agents', docPath(ctx, 'agents')));
+    const child = spawn(tool.bin, args, {
+      cwd: ctx.projectRoot,
+      detached: true,
+      stdio: 'ignore',
+    });
+    // The HTTP response is already on its way, so a spawn failure (e.g. the binary
+    // vanished between detection and launch) can only be logged — never let its
+    // 'error' event bubble up as an unhandled exception.
+    child.on('error', (err) => {
+      console.error(`agman ui: failed to launch ${tool.bin}: ${err.message}`);
+    });
+    child.unref();
+    return {
+      started: true,
+      tool: tool.id,
+      bin: tool.bin,
+      note: 'running detached; watch the docs table for changes',
     };
   },
 };

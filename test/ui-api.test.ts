@@ -295,3 +295,97 @@ describe('ui api — docs', () => {
     expect((await res.json()).error).toMatch(/gemini|symlink/i);
   });
 });
+
+describe('ui api — docs AI refresh', () => {
+  it('GET /api/docs/refresh-tools lists the three tools with boolean installed flags', async () => {
+    const res = await call('GET', '/api/docs/refresh-tools');
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.tools.map((t: { id: string }) => t.id)).toEqual([
+      'claude-code',
+      'codex',
+      'gemini-cli',
+    ]);
+    for (const t of data.tools) {
+      expect(typeof t.installed).toBe('boolean');
+      expect(typeof t.bin).toBe('string');
+      expect(typeof t.installHint).toBe('string');
+    }
+  });
+
+  it('POST /api/docs/refresh with an unknown tool id → 400 listing the valid ids', async () => {
+    const res = await call('POST', '/api/docs/refresh', { body: { tool: 'not-a-tool' } });
+    expect(res.status).toBe(400);
+    const { error } = await res.json();
+    expect(error).toMatch(/unknown refresh tool/);
+    expect(error).toMatch(/claude-code/);
+    expect(error).toMatch(/codex/);
+    expect(error).toMatch(/gemini-cli/);
+  });
+
+  it('POST /api/docs/refresh with no tool and an empty PATH → 400 with all install hints', async () => {
+    // The handler reads process.env.PATH at request time, so temporarily blank it.
+    const savedPath = process.env.PATH;
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agman-empty-path-'));
+    process.env.PATH = emptyDir;
+    try {
+      const res = await call('POST', '/api/docs/refresh', { body: {} });
+      expect(res.status).toBe(400);
+      const { error } = await res.json();
+      expect(error).toMatch(/@anthropic-ai\/claude-code/);
+      expect(error).toMatch(/@openai\/codex/);
+      expect(error).toMatch(/@google\/gemini-cli/);
+    } finally {
+      process.env.PATH = savedPath;
+      fs.rmSync(emptyDir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /api/docs/refresh with a known but uninstalled tool → 400 with its install hint', async () => {
+    const savedPath = process.env.PATH;
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agman-empty-path-'));
+    process.env.PATH = emptyDir;
+    try {
+      const res = await call('POST', '/api/docs/refresh', { body: { tool: 'codex' } });
+      expect(res.status).toBe(400);
+      const { error } = await res.json();
+      expect(error).toMatch(/codex is not on PATH/);
+      expect(error).toMatch(/@openai\/codex/);
+    } finally {
+      process.env.PATH = savedPath;
+      fs.rmSync(emptyDir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /api/docs/refresh spawns the detached tool with cwd=projectRoot (happy path)', async () => {
+    // A fake `claude` that records its working directory then exits, so we can
+    // prove the detached spawn actually launched — without running a real agent.
+    const binDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agman-fakebin-')));
+    const marker = path.join(binDir, 'marker.txt');
+    const fakeClaude = path.join(binDir, 'claude');
+    fs.writeFileSync(fakeClaude, `#!/bin/sh\necho "$PWD" > ${marker}\n`);
+    fs.chmodSync(fakeClaude, 0o755);
+    const savedPath = process.env.PATH;
+    process.env.PATH = binDir + path.delimiter + (savedPath ?? '');
+    try {
+      const res = await call('POST', '/api/docs/refresh', { body: { tool: 'claude-code' } });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data).toMatchObject({ started: true, tool: 'claude-code', bin: 'claude' });
+
+      // The child writes the marker asynchronously after detaching; poll (~2s cap).
+      let contents: string | null = null;
+      for (let i = 0; i < 40; i++) {
+        if (fs.existsSync(marker)) {
+          contents = fs.readFileSync(marker, 'utf8').trim();
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(contents).toBe(projectRoot);
+    } finally {
+      process.env.PATH = savedPath;
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+});
