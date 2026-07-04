@@ -1086,8 +1086,14 @@ function skillMatchesFilter(s) {
 }
 
 function skillRow(s) {
-  // 이름: bold name (+ inline 가려짐 tag) over a mono locationKey:scope subtitle
-  // (reuses the docs 파일-cell pattern via the shared .cell-sub style).
+  // Per-project Claude Code applicability (a SEPARATE axis from enabled/disabled):
+  // only the excluded state is called out, with a calm muted 제외됨 tag beside the
+  // name. Default 'on' / name-only / user-invocable-only / non-Claude skills show
+  // nothing here, keeping the list quiet.
+  const excludedFromClaude = s.claudeApplicability === 'off';
+
+  // 이름: bold name (+ inline 가려짐 / 제외됨 tags) over a mono locationKey:scope
+  // subtitle (reuses the docs 파일-cell pattern via the shared .cell-sub style).
   const nameCell = el(
     'td',
     {},
@@ -1096,6 +1102,13 @@ function skillRow(s) {
       { class: 'cell-title' },
       s.name,
       s.shadowed ? el('span', { class: 'badge badge-amber inline-tag', text: '가려짐' }) : null,
+      excludedFromClaude
+        ? el('span', {
+            class: 'badge badge-idle inline-tag',
+            title: '이 프로젝트에서 Claude Code가 사용하지 않음',
+            text: '제외됨',
+          })
+        : null,
     ),
     el('div', { class: 'cell-sub', title: s.path, text: `${s.locationKey}:${s.scope}` }),
   );
@@ -1115,7 +1128,22 @@ function skillRow(s) {
   const statusCell = el('td', { 'data-label': '상태' }, s.enabled ? badge('활성', 'green') : badge('비활성', 'red'));
 
   // Toggle stays inline (highest-frequency action + the e2e clicks it directly);
-  // 편집/복사/삭제 fold into the ⋯ menu, 삭제 danger and last.
+  // 편집/복사/[적용·제외]/삭제 fold into the ⋯ menu, 삭제 danger and last. The
+  // applicability item appears ONLY for Claude-visible skills (claudeApplicability
+  // defined) and sits just above the destructive 삭제.
+  const menuItems = [
+    { label: '편집', onClick: () => editSkill(s) },
+    { label: '복사', onClick: () => copySkillModal(s) },
+  ];
+  if (s.claudeApplicability !== undefined) {
+    menuItems.push(
+      excludedFromClaude
+        ? { label: '이 프로젝트에 적용', onClick: () => toggleApplicability(s, 'on') }
+        : { label: '이 프로젝트에서 제외', onClick: () => toggleApplicability(s, 'off') },
+    );
+  }
+  menuItems.push({ label: '삭제', danger: true, onClick: () => deleteSkill(s) });
+
   const actions = el(
     'td',
     { class: 'col-actions' },
@@ -1128,11 +1156,7 @@ function skillRow(s) {
         text: s.enabled ? '비활성' : '활성',
         onclick: () => toggleSkill(s),
       }),
-      overflowMenu([
-        { label: '편집', onClick: () => editSkill(s) },
-        { label: '복사', onClick: () => copySkillModal(s) },
-        { label: '삭제', danger: true, onClick: () => deleteSkill(s) },
-      ]),
+      overflowMenu(menuItems),
     ),
   );
 
@@ -1148,6 +1172,22 @@ async function toggleSkill(s) {
       enabled: !s.enabled,
     });
     toast(`${s.name} ${!s.enabled ? '활성화' : '비활성화'}됨`);
+    render();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+// Per-project Claude Code applicability — a distinct axis from toggleSkill's
+// enable/disable (which owns the skill's directory presence). 'off' excludes the
+// skill from Claude Code IN THIS PROJECT (via .claude/settings.local.json);
+// 'on' restores the default. The toast names both scopes so it never reads like
+// the enable/disable action above.
+async function toggleApplicability(s, state) {
+  try {
+    await api('POST', '/api/skills/applicability', { name: s.name, state });
+    const verb = state === 'off' ? '제외됨' : '적용됨';
+    toast(`${verb}: ${s.name} (이 프로젝트 · Claude Code)`);
     render();
   } catch (err) {
     toast(err.message, 'err');

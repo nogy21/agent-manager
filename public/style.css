@@ -430,6 +430,16 @@ td.col-actions {
   color: var(--badge-red-fg);
 }
 
+/* Idle/muted pill for a calm "not in use" state — deliberately quieter than the
+   red 비활성 badge so the per-project applicability axis (제외됨) never reads as an
+   error. Outlined + muted, keyed off the idle state token used by the fleet dots. */
+.badge-idle {
+  background: transparent;
+  color: var(--state-idle);
+  border: 1px solid var(--state-idle);
+  padding: 1px 7px;
+}
+
 /* ---- buttons & forms ---- */
 
 .btn {

@@ -31,6 +31,7 @@ import {
   removeSkill,
   setSkillEnabled,
 } from '../skills/core.js';
+import { setClaudeApplicability } from '../skills/overrides.js';
 import { gatherStatus } from '../status.js';
 
 export interface UiServer {
@@ -89,6 +90,14 @@ function optStr(body: Json, field: string): string | undefined {
 function reqBool(body: Json, field: string): boolean {
   const v = body[field];
   if (typeof v !== 'boolean') throw new CliError(`missing or invalid field: ${field}`);
+  return v;
+}
+
+function reqOnOff(body: Json, field: string): 'on' | 'off' {
+  const v = body[field];
+  if (v !== 'on' && v !== 'off') {
+    throw new CliError(`invalid ${field}: ${String(v)} (use "on" or "off")`);
+  }
   return v;
 }
 
@@ -180,6 +189,10 @@ const routes: Record<string, RouteHandler> = {
       { locationKey: reqStr(body, 'locationKey'), scope: reqScope(body.scope) },
       { force: optBool(body, 'force') },
     ),
+  'POST /api/skills/applicability': ({ ctx, body }) => {
+    setClaudeApplicability(ctx, reqStr(body, 'name'), reqOnOff(body, 'state'));
+    return { ok: true };
+  },
   'GET /api/skills/content': ({ ctx, query }) => {
     const name = reqQuery(query, 'name');
     return readSkill(ctx, name, {

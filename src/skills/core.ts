@@ -4,6 +4,7 @@ import { locationByKey, skillsLocations, type AgentId } from '../agents/registry
 import type { Context, Scope } from '../context.js';
 import { CliError } from '../errors.js';
 import { parseFrontmatter, serializeFrontmatter } from '../frontmatter.js';
+import { readEffectiveOverrides, type SkillOverrideState } from './overrides.js';
 
 export interface SkillInfo {
   name: string;
@@ -15,6 +16,9 @@ export interface SkillInfo {
   enabled: boolean;
   visibleTo: AgentId[]; // [] when disabled
   shadowed: boolean; // a global skill shadowed by an enabled local skill sharing >=1 agent
+  // Claude Code's per-project applicability (from `.claude/settings*.json` skillOverrides).
+  // Set ONLY for skills visible to Claude Code; `undefined` otherwise. Default 'on'.
+  claudeApplicability?: SkillOverrideState;
 }
 
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -149,8 +153,21 @@ function preferenceComparator(ctx: Context): (a: SkillInfo, b: SkillInfo) => num
   };
 }
 
+/**
+ * Attach Claude Code's per-project applicability to every skill visible to Claude Code.
+ * Reads the effective `skillOverrides` once (not per skill); leaves other skills untouched.
+ */
+function withClaudeApplicability(ctx: Context, skills: SkillInfo[]): SkillInfo[] {
+  const overrides = readEffectiveOverrides(ctx);
+  return skills.map((s) =>
+    s.visibleTo.includes('claude-code')
+      ? { ...s, claudeApplicability: overrides[s.name] ?? 'on' }
+      : s,
+  );
+}
+
 function allSkills(ctx: Context): SkillInfo[] {
-  return withShadowed(scanAll(ctx));
+  return withClaudeApplicability(ctx, withShadowed(scanAll(ctx)));
 }
 
 export function listSkills(

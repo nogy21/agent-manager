@@ -214,6 +214,42 @@ describe('ui api — skills', () => {
     expect(list.map((s: { name: string }) => s.name)).not.toContain('doomed-skill');
   });
 
+  it('sets Claude applicability off then reflects it in the skills listing', async () => {
+    // A Claude-visible skill defaults to applicability "on".
+    await call('POST', '/api/skills', {
+      body: { name: 'appl-skill', location: 'claude', scope: 'local' },
+    });
+    let listed = (await (await call('GET', '/api/skills')).json()).find(
+      (s: { name: string }) => s.name === 'appl-skill',
+    );
+    expect(listed.claudeApplicability).toBe('on');
+
+    const off = await call('POST', '/api/skills/applicability', {
+      body: { name: 'appl-skill', state: 'off' },
+    });
+    expect(off.status).toBe(200);
+    expect((await off.json()).ok).toBe(true);
+
+    // The override lands in .claude/settings.local.json (personal, gitignored).
+    const settings = JSON.parse(
+      fs.readFileSync(path.join(projectRoot, '.claude', 'settings.local.json'), 'utf8'),
+    );
+    expect(settings).toEqual({ skillOverrides: { 'appl-skill': 'off' } });
+
+    listed = (await (await call('GET', '/api/skills')).json()).find(
+      (s: { name: string }) => s.name === 'appl-skill',
+    );
+    expect(listed.claudeApplicability).toBe('off');
+  });
+
+  it('rejects an invalid applicability state with 400', async () => {
+    const res = await call('POST', '/api/skills/applicability', {
+      body: { name: 'whatever', state: 'name-only' },
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/invalid state/);
+  });
+
   it('maps a CliError to 400 with a message (duplicate create)', async () => {
     await createSkill('dupe-skill');
     const res = await createSkill('dupe-skill');
