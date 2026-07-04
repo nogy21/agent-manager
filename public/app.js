@@ -347,6 +347,140 @@ function openEditorModal({ title, content, onSave }) {
   openModal({ title, body: editor, footer: [cancelBtn(), save], initialFocus: textarea });
 }
 
+// ---- overflow menu (⋯) ----
+// A single popover at a time, rendered into #popover-root (top level) so its
+// position:fixed escapes the tables' overflow-x:auto clipping. `openPopover`
+// holds the live { menu, trigger, cleanup } so Escape can prefer the popover
+// over the modal and only one is ever mounted.
+let openPopover = null;
+
+function closePopover() {
+  if (!openPopover) return;
+  const { trigger, cleanup } = openPopover;
+  cleanup();
+  document.getElementById('popover-root').replaceChildren();
+  openPopover = null;
+  trigger.setAttribute('aria-expanded', 'false');
+  if (document.contains(trigger)) trigger.focus();
+}
+
+// Place the menu anchored to the trigger, right-aligned under it, flipping up
+// or left when it would overflow the viewport. Measured after mount so we know
+// the menu's real size. Coordinates are viewport-relative (position:fixed).
+function positionPopover(menu, trigger) {
+  const r = trigger.getBoundingClientRect();
+  const gap = 6;
+  const mw = menu.offsetWidth;
+  const mh = menu.offsetHeight;
+  const vw = document.documentElement.clientWidth;
+  const vh = document.documentElement.clientHeight;
+
+  // Right edge aligns with the trigger's right; flip to left-align if it would
+  // spill off the left edge.
+  let left = r.right - mw;
+  if (left < gap) left = Math.min(r.left, vw - mw - gap);
+  left = Math.max(gap, left);
+
+  // Open downward; flip above the trigger if there isn't room below.
+  let top = r.bottom + gap;
+  if (top + mh > vh - gap && r.top - gap - mh > gap) top = r.top - gap - mh;
+  top = Math.max(gap, Math.min(top, vh - mh - gap));
+
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
+// Factory: items = [{ label, onClick, danger? }] → a ⋯ trigger button. Opening
+// mounts the menu, focuses its first item, and closes on item click, outside
+// click, Escape, scroll, or resize (returning focus to the trigger).
+function overflowMenu(items) {
+  const trigger = el('button', {
+    class: 'icon-btn overflow-trigger',
+    type: 'button',
+    'aria-haspopup': 'menu',
+    'aria-expanded': 'false',
+    'aria-label': '추가 작업',
+    text: '⋯',
+  });
+
+  const open = () => {
+    if (openPopover && openPopover.trigger === trigger) {
+      closePopover();
+      return;
+    }
+    closePopover();
+
+    const menu = el('div', { class: 'overflow-menu', role: 'menu' });
+    for (const item of items) {
+      menu.append(
+        el('button', {
+          class: item.danger ? 'overflow-item danger' : 'overflow-item',
+          type: 'button',
+          role: 'menuitem',
+          text: item.label,
+          onclick: () => {
+            closePopover();
+            item.onClick();
+          },
+        }),
+      );
+    }
+
+    const root = document.getElementById('popover-root');
+    root.append(menu);
+    positionPopover(menu, trigger);
+
+    // Arrow keys walk the menu items; Escape closes (handled globally too, but
+    // stopped here so it never also closes an underlying modal).
+    const onKeydown = (e) => {
+      const menuItems = Array.from(menu.querySelectorAll('.overflow-item'));
+      const idx = menuItems.indexOf(document.activeElement);
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closePopover();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        (menuItems[idx + 1] || menuItems[0]).focus();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        (menuItems[idx - 1] || menuItems[menuItems.length - 1]).focus();
+      } else if (e.key === 'Tab') {
+        // Tabbing away dismisses the popover rather than trapping focus.
+        closePopover();
+      }
+    };
+    // Outside click / reposition triggers. Scroll listens in capture so it fires
+    // for any scrolling ancestor (the table wrap), not just the window.
+    const onPointer = (e) => {
+      if (!menu.contains(e.target) && e.target !== trigger) closePopover();
+    };
+    const onReflow = () => closePopover();
+
+    document.addEventListener('keydown', onKeydown, true);
+    document.addEventListener('pointerdown', onPointer, true);
+    window.addEventListener('scroll', onReflow, true);
+    window.addEventListener('resize', onReflow);
+
+    openPopover = {
+      menu,
+      trigger,
+      cleanup: () => {
+        document.removeEventListener('keydown', onKeydown, true);
+        document.removeEventListener('pointerdown', onPointer, true);
+        window.removeEventListener('scroll', onReflow, true);
+        window.removeEventListener('resize', onReflow);
+      },
+    };
+    trigger.setAttribute('aria-expanded', 'true');
+    const first = menu.querySelector('.overflow-item');
+    if (first) first.focus();
+  };
+
+  trigger.addEventListener('click', open);
+  return trigger;
+}
+
 // ---- overview view (Mission Control home) ----
 
 // One source of truth for how an agent's instruction state maps to a color
@@ -717,6 +851,8 @@ function skillRow(s) {
   );
   const statusCell = el('td', { 'data-label': '상태' }, s.enabled ? badge('활성', 'green') : badge('비활성', 'red'));
 
+  // Toggle stays inline (highest-frequency action + the e2e clicks it directly);
+  // 편집/복사/삭제 fold into the ⋯ menu, 삭제 danger and last.
   const actions = el(
     'td',
     { class: 'col-actions' },
@@ -729,19 +865,11 @@ function skillRow(s) {
         text: s.enabled ? '비활성' : '활성',
         onclick: () => toggleSkill(s),
       }),
-      el('button', { class: 'btn btn-sm', type: 'button', text: '편집', onclick: () => editSkill(s) }),
-      el('button', {
-        class: 'btn btn-sm',
-        type: 'button',
-        text: '복사',
-        onclick: () => copySkillModal(s),
-      }),
-      el('button', {
-        class: 'btn btn-sm danger',
-        type: 'button',
-        text: '삭제',
-        onclick: () => deleteSkill(s),
-      }),
+      overflowMenu([
+        { label: '편집', onClick: () => editSkill(s) },
+        { label: '복사', onClick: () => copySkillModal(s) },
+        { label: '삭제', danger: true, onClick: () => deleteSkill(s) },
+      ]),
     ),
   );
 
@@ -997,54 +1125,33 @@ function docRow(d, status) {
     { 'data-label': '스코프' },
     d.scope === 'global' ? badge('global', 'gray') : badge('local', 'cyan'),
   );
+  // Primary action stays inline; spokes fold 차이 보기 (first) and 링크/링크 해제
+  // into the ⋯ menu. Non-spoke rows have a single action and show no menu.
   const actions = el('div', { class: 'row-actions' });
-  if (d.exists) {
-    actions.append(
-      el('button', {
-        class: 'btn btn-sm',
-        type: 'button',
-        text: '보기·편집',
-        onclick: () => editDoc(d),
-      }),
-    );
-  } else {
-    actions.append(
-      el('button', {
-        class: 'btn btn-sm',
-        type: 'button',
-        text: '만들기',
-        onclick: () => initDoc(d.key),
-      }),
-    );
-  }
+  actions.append(
+    d.exists
+      ? el('button', {
+          class: 'btn btn-sm',
+          type: 'button',
+          text: '보기·편집',
+          onclick: () => editDoc(d),
+        })
+      : el('button', {
+          class: 'btn btn-sm',
+          type: 'button',
+          text: '만들기',
+          onclick: () => initDoc(d.key),
+        }),
+  );
   if (d.role === 'spoke') {
     actions.append(
-      el('button', {
-        class: 'btn btn-sm',
-        type: 'button',
-        text: '차이 보기',
-        onclick: () => diffDoc(d),
-      }),
+      overflowMenu([
+        { label: '차이 보기', onClick: () => diffDoc(d) },
+        d.isSymlink
+          ? { label: '링크 해제', onClick: () => unlinkDocAction(d) }
+          : { label: '링크', onClick: () => linkDocAction(d) },
+      ]),
     );
-    if (d.isSymlink) {
-      actions.append(
-        el('button', {
-          class: 'btn btn-sm',
-          type: 'button',
-          text: '링크 해제',
-          onclick: () => unlinkDocAction(d),
-        }),
-      );
-    } else {
-      actions.append(
-        el('button', {
-          class: 'btn btn-sm',
-          type: 'button',
-          text: '링크',
-          onclick: () => linkDocAction(d),
-        }),
-      );
-    }
   }
 
   return el(
@@ -1368,6 +1475,8 @@ function init() {
     btn.addEventListener('click', () => setTab(btn.dataset.tab));
   }
   document.addEventListener('keydown', (e) => {
+    // A popover, when open, owns Escape (its own capture-phase handler already
+    // closed it and stopped propagation); this fallback only reaches the modal.
     if (e.key === 'Escape') closeModal();
   });
   setTab('dashboard');
