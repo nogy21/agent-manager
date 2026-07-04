@@ -481,6 +481,269 @@ function overflowMenu(items) {
   return trigger;
 }
 
+// ---- command palette (⌘K / Ctrl+K) ----
+// A keyboard-first launcher rendered into #popover-root. It is fully additive:
+// opened only by ⌘K or the header pill, never on load. Independent of openModal
+// so its Escape + focus-trap never tangle with an open editor/diff modal.
+// `openPalette` holds the live { close, trigger } singleton; a null value means
+// the palette is closed. Data (skills/docs/status) is fetched once per open —
+// simple, no caching.
+let openPalette = null;
+
+// Build the flat command list from freshly-fetched data, grouped for display.
+// Each command is { group, label, hint?, run } where run() performs the action.
+// Groups: 이동 (nav) · 작업 (global actions) · 스킬 · 문서. Nav/actions always
+// present; skills/docs are matched by their label text against the query.
+function buildPaletteCommands({ skills, docs, status }) {
+  const commands = [];
+
+  // 이동 — tab navigation.
+  for (const [tab, label] of [
+    ['dashboard', '개요'],
+    ['skills', '스킬'],
+    ['docs', '문서'],
+  ]) {
+    commands.push({ group: '이동', label, hint: '이동', run: () => setTab(tab) });
+  }
+
+  // 작업 — global actions. 허브 만들기 only surfaces when no hub exists yet.
+  const hubExists = status ? status.hubExists : docs.some((d) => d.role === 'hub' && d.exists);
+  if (!hubExists) {
+    commands.push({
+      group: '작업',
+      label: '허브 만들기',
+      hint: 'AGENTS.md',
+      run: () => initDoc('agents'),
+    });
+  }
+  commands.push({
+    group: '작업',
+    label: '허브 → 전체 동기화',
+    hint: '문서',
+    run: () => syncAll(),
+  });
+
+  // 스킬 — open the editor for a matched skill.
+  for (const s of skills) {
+    commands.push({
+      group: '스킬',
+      label: s.name,
+      hint: s.description || `${s.locationKey}:${s.scope}`,
+      search: `${s.name} ${s.description || ''}`,
+      run: () => editSkill(s),
+    });
+  }
+
+  // 문서 — open the editor for a matched doc (existing files only).
+  for (const d of docs.filter((doc) => doc.exists)) {
+    commands.push({
+      group: '문서',
+      label: d.label,
+      hint: '편집',
+      run: () => editDoc(d),
+    });
+  }
+
+  return commands;
+}
+
+const PALETTE_GROUP_ORDER = ['이동', '작업', '스킬', '문서'];
+const PALETTE_GROUP_CAP = 6;
+
+// Filter by case-insensitive substring over each command's searchable text
+// (label + optional richer `search`), then cap each group to PALETTE_GROUP_CAP,
+// tracking how many were truncated so the list can show "그 외 N개".
+function filterPaletteCommands(commands, query) {
+  const q = query.trim().toLowerCase();
+  const byGroup = new Map();
+  for (const cmd of commands) {
+    const hay = (cmd.search || cmd.label).toLowerCase();
+    if (q && !hay.includes(q)) continue;
+    if (!byGroup.has(cmd.group)) byGroup.set(cmd.group, []);
+    byGroup.get(cmd.group).push(cmd);
+  }
+  const groups = [];
+  for (const name of PALETTE_GROUP_ORDER) {
+    const all = byGroup.get(name);
+    if (!all || all.length === 0) continue;
+    groups.push({ name, items: all.slice(0, PALETTE_GROUP_CAP), overflow: all.length - PALETTE_GROUP_CAP });
+  }
+  return groups;
+}
+
+function closeCommandPalette() {
+  if (openPalette) openPalette.close();
+}
+
+async function openCommandPalette() {
+  if (openPalette) return; // already open — ⌘K is idempotent
+  closePopover(); // a stray overflow menu shares #popover-root; clear it first
+  const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+  let data;
+  try {
+    const [skills, docs, status] = await Promise.all([
+      api('GET', '/api/skills'),
+      api('GET', '/api/docs'),
+      api('GET', '/api/status'),
+    ]);
+    data = { skills, docs, status };
+  } catch (err) {
+    toast(err.message, 'err');
+    return;
+  }
+  // A late failure elsewhere could have opened another palette while we awaited;
+  // bail rather than stack two overlays.
+  if (openPalette) return;
+
+  const commands = buildPaletteCommands(data);
+
+  const input = el('input', {
+    type: 'text',
+    class: 'palette-input',
+    placeholder: '명령 또는 스킬·문서 검색…',
+    'aria-label': '명령 또는 스킬·문서 검색',
+    'aria-controls': 'palette-results',
+    autocomplete: 'off',
+    spellcheck: 'false',
+  });
+  const results = el('div', { class: 'palette-results', id: 'palette-results', role: 'listbox' });
+  const panel = el(
+    'div',
+    {
+      class: 'palette',
+      role: 'dialog',
+      'aria-modal': 'true',
+      'aria-label': '명령 팔레트',
+    },
+    el(
+      'div',
+      { class: 'palette-input-wrap' },
+      el('span', { class: 'palette-search-icon', 'aria-hidden': 'true', text: '⌕' }),
+      input,
+    ),
+    results,
+  );
+  const overlay = el('div', { class: 'palette-overlay' }, panel);
+
+  // Flat list of the currently-visible command buttons + their command objects,
+  // kept in sync with the rendered groups so ↑/↓ can walk them and Enter can run
+  // the selected one. `selected` indexes into `flat`.
+  let flat = [];
+  let selected = 0;
+
+  const paintSelection = () => {
+    flat.forEach((entry, i) => {
+      const isSel = i === selected;
+      entry.node.classList.toggle('selected', isSel);
+      entry.node.setAttribute('aria-selected', isSel ? 'true' : 'false');
+      if (isSel) {
+        entry.node.setAttribute('aria-current', 'true');
+        entry.node.scrollIntoView({ block: 'nearest' });
+      } else {
+        entry.node.removeAttribute('aria-current');
+      }
+    });
+  };
+
+  const rerender = () => {
+    const groups = filterPaletteCommands(commands, input.value);
+    flat = [];
+    const children = [];
+    for (const g of groups) {
+      children.push(el('div', { class: 'palette-group-label', text: g.name }));
+      for (const cmd of g.items) {
+        const idx = flat.length;
+        const node = el(
+          'button',
+          {
+            class: 'palette-item',
+            type: 'button',
+            role: 'option',
+            onclick: () => runPaletteItem(idx),
+            onmousemove: () => {
+              // Hover moves the highlight without re-firing on every pixel.
+              if (selected !== idx) {
+                selected = idx;
+                paintSelection();
+              }
+            },
+          },
+          el('span', { class: 'palette-item-label', text: cmd.label }),
+          cmd.hint ? el('span', { class: 'palette-item-hint', text: cmd.hint }) : null,
+        );
+        flat.push({ node, cmd });
+        children.push(node);
+      }
+      if (g.overflow > 0) {
+        children.push(el('div', { class: 'palette-more', text: `그 외 ${g.overflow}개` }));
+      }
+    }
+    if (flat.length === 0) {
+      children.push(el('div', { class: 'palette-empty', text: '결과가 없습니다.' }));
+    }
+    results.replaceChildren(...children);
+    selected = 0;
+    paintSelection();
+  };
+
+  const runPaletteItem = (idx) => {
+    const entry = flat[idx];
+    if (!entry) return;
+    const run = entry.cmd.run;
+    close(); // close first so focus/DOM are clean before the action opens its own UI
+    run();
+  };
+
+  const move = (delta) => {
+    if (flat.length === 0) return;
+    selected = (selected + delta + flat.length) % flat.length;
+    paintSelection();
+  };
+
+  // Keydown on the panel: arrows navigate, Enter runs, Esc closes, Tab is trapped
+  // to the input (the only tabbable control — results are driven by arrows). All
+  // handled here and never allowed to bubble to the global ⌘K/Esc listeners.
+  const onKeydown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      move(1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      move(-1);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      runPaletteItem(selected);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    } else if (e.key === 'Tab') {
+      // Keep focus on the input; there is nothing else to tab to.
+      e.preventDefault();
+      input.focus();
+    }
+  };
+  panel.addEventListener('keydown', onKeydown);
+  overlay.addEventListener('mousedown', (e) => {
+    if (e.target === overlay) close();
+  });
+  input.addEventListener('input', rerender);
+
+  function close() {
+    if (!openPalette) return;
+    openPalette = null;
+    panel.removeEventListener('keydown', onKeydown);
+    document.getElementById('popover-root').replaceChildren();
+    if (trigger && document.contains(trigger)) trigger.focus();
+  }
+
+  openPalette = { close, trigger };
+  document.getElementById('popover-root').append(overlay);
+  rerender();
+  input.focus();
+}
+
 // ---- overview view (Mission Control home) ----
 
 // One source of truth for how an agent's instruction state maps to a color
@@ -1474,10 +1737,24 @@ function init() {
   for (const btn of document.querySelectorAll('.tab')) {
     btn.addEventListener('click', () => setTab(btn.dataset.tab));
   }
+  const paletteTrigger = document.getElementById('palette-trigger');
+  if (paletteTrigger) paletteTrigger.addEventListener('click', openCommandPalette);
   document.addEventListener('keydown', (e) => {
-    // A popover, when open, owns Escape (its own capture-phase handler already
-    // closed it and stopped propagation); this fallback only reaches the modal.
-    if (e.key === 'Escape') closeModal();
+    // ⌘K / Ctrl+K toggles the command palette. Guarded so it never fires with
+    // other modifiers (e.g. ⌘⇧K) and never swallows the editor's own ⌘S.
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      if (openPalette) closeCommandPalette();
+      else openCommandPalette();
+      return;
+    }
+    // Escape precedence: palette → popover → modal. The palette and popover own
+    // their own Escape (their handlers stop propagation), so this fallback only
+    // reaches the modal. Still, if the palette is somehow open, close it first.
+    if (e.key === 'Escape') {
+      if (openPalette) closeCommandPalette();
+      else closeModal();
+    }
   });
   setTab('dashboard');
 }
