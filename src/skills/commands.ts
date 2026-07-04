@@ -18,6 +18,7 @@ import {
   setSkillEnabled,
   type SkillInfo,
 } from './core.js';
+import { setClaudeApplicability } from './overrides.js';
 
 const DESC_WIDTH = 60;
 const PRIMARY_KEYS = ['claude', 'agents'];
@@ -266,6 +267,32 @@ export function buildSkillsCommand(getCtx: () => Context): Command {
     .action(
       runAction((name: string, opts: { global?: boolean; local?: boolean; loc?: string }) => {
         toggle(getCtx(), name, false, opts);
+      }),
+    );
+
+  cmd
+    .command('exclude <name>')
+    .description(
+      'Hide a skill from Claude Code in this project ' +
+        "(writes .claude/settings.local.json skillOverrides, without deleting the skill)",
+    )
+    .action(
+      runAction((name: string) => {
+        setClaudeApplicability(getCtx(), name, 'off');
+        console.log(green('excluded') + ` ${name} ` + dim('(Claude Code, this project)'));
+      }),
+    );
+
+  cmd
+    .command('include <name>')
+    .description(
+      'Restore a skill for Claude Code in this project ' +
+        '(clears its .claude/settings.local.json skillOverrides entry)',
+    )
+    .action(
+      runAction((name: string) => {
+        setClaudeApplicability(getCtx(), name, 'on');
+        console.log(green('included') + ` ${name} ` + dim('(Claude Code, this project)'));
       }),
     );
 

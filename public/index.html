@@ -10,10 +10,20 @@
     <header class="app-header">
       <div class="brand">agman</div>
       <div class="project-path" id="project-path"></div>
+      <button
+        class="palette-trigger header-spacer"
+        id="palette-trigger"
+        type="button"
+        aria-label="명령 팔레트 열기"
+        aria-keyshortcuts="Meta+K Control+K"
+      >
+        <span>검색</span>
+        <span class="palette-kbd" aria-hidden="true">⌘K</span>
+      </button>
     </header>
 
     <nav class="tabs" id="tabs">
-      <button class="tab" data-tab="dashboard" type="button">대시보드</button>
+      <button class="tab" data-tab="dashboard" type="button">개요</button>
       <button class="tab" data-tab="skills" type="button">스킬</button>
       <button class="tab" data-tab="docs" type="button">문서</button>
     </nav>
@@ -23,6 +33,10 @@
     <div id="toasts" class="toasts" aria-live="polite"></div>
 
     <div id="modal-root"></div>
+
+    <!-- Overflow-menu popovers render here (top level) so position:fixed escapes
+         the tables' overflow-x:auto clipping. -->
+    <div id="popover-root"></div>
 
     <script type="module" src="/app.js"></script>
   </body>

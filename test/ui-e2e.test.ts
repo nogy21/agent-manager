@@ -58,9 +58,12 @@ describe('ui e2e — dashboard → skills → docs', () => {
       try {
         await page.goto(server.url);
 
-        // --- 대시보드: six agents render ---
+        // --- 개요: the health hero renders and all six agents appear as fleet pills ---
+        // (The redesigned Overview has no agents table; the fleet strip is the
+        // stable, one-per-agent surface, so we count .fleet-agent pills instead.)
+        await page.getByText('시스템 상태').first().waitFor();
         await page.getByText('Claude Code').first().waitFor();
-        const agentCount = await page.locator('table').first().locator('tbody tr').count();
+        const agentCount = await page.locator('.fleet-agent').count();
         expect(agentCount).toBe(6);
 
         // --- 스킬: create a skill via the form ---
