@@ -1076,32 +1076,126 @@ async function renderDashboard(main) {
 let skillsQuery = '';
 let skillsStatus = 'all'; // 'all' | 'enabled' | 'disabled'
 
-function skillMatchesFilter(s) {
-  if (skillsStatus === 'enabled' && !s.enabled) return false;
-  if (skillsStatus === 'disabled' && s.enabled) return false;
+// A group matches the text query on its name or its primary description, and the
+// status filter on whether ANY instance is enabled — so the identity-centric row
+// filters as one unit rather than per instance.
+function skillMatchesFilter(group) {
+  if (skillsStatus === 'enabled' && !group.anyEnabled) return false;
+  if (skillsStatus === 'disabled' && group.anyEnabled) return false;
   const q = skillsQuery.trim().toLowerCase();
   if (!q) return true;
-  const hay = `${s.name} ${s.description || ''}`.toLowerCase();
+  const hay = `${group.name} ${group.primary.description || ''}`.toLowerCase();
   return hay.includes(q);
 }
 
-function skillRow(s) {
+// Identity-centric aggregation: collapse the flat SkillInfo[] (one entry per
+// filesystem instance) into one group per distinct NAME. Each name can exist in
+// several places at once (e.g. claude:local shadowing claude:global), which the
+// row shows as a calm layering subtitle rather than N separate rows.
+function groupSkillsByName(skills) {
+  const byName = new Map();
+  for (const s of skills) {
+    if (!byName.has(s.name)) byName.set(s.name, []);
+    byName.get(s.name).push(s);
+  }
+
+  const groups = [];
+  for (const [name, all] of byName) {
+    // Primary = most specific/actionable instance: enabled before disabled, then
+    // local before global. instances[0] drives description + inline toggle + the
+    // single-instance menu actions.
+    const instances = all
+      .slice()
+      .sort((a, b) => {
+        if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+        if (a.scope !== b.scope) return a.scope === 'local' ? -1 : 1;
+        return a.locationKey.localeCompare(b.locationKey);
+      });
+    const primary = instances[0];
+
+    // 에이전트 union across ENABLED instances only (disabled skills expose nothing),
+    // deduped and order-stable.
+    const visibleTo = [];
+    for (const inst of instances) {
+      if (!inst.enabled) continue;
+      for (const agent of inst.visibleTo) {
+        if (!visibleTo.includes(agent)) visibleTo.push(agent);
+      }
+    }
+
+    // Applicability is a per-NAME property (Claude sees one skill by that name);
+    // read it off whichever instance defines it.
+    const withApplicability = instances.find((i) => i.claudeApplicability !== undefined);
+
+    groups.push({
+      name,
+      instances,
+      primary,
+      visibleTo,
+      claudeApplicability: withApplicability ? withApplicability.claudeApplicability : undefined,
+      anyEnabled: instances.some((i) => i.enabled),
+    });
+  }
+  return groups;
+}
+
+// Human scope label for an instance, reused by the subtitle and per-instance menu
+// labels so "which one" is always phrased the same way.
+function scopeLabel(scope) {
+  return scope === 'global' ? '전역' : '로컬';
+}
+
+// Compact, factual layering summary for the name subtitle. One location →
+// "<loc> · <scopes>" where scopes collapses to 전역 / 로컬 / 전역+로컬. Several
+// locations → "<loc> <scope>" per location joined by " · " (e.g.
+// "claude 로컬 · agents 전역"). Grouping already unifies a shadowed global with
+// its local sibling, so this states the layering without asserting a winner.
+function layerSummary(instances) {
+  const byLocation = new Map();
+  for (const inst of instances) {
+    if (!byLocation.has(inst.locationKey)) byLocation.set(inst.locationKey, new Set());
+    byLocation.get(inst.locationKey).add(inst.scope);
+  }
+
+  const scopesText = (scopes) => {
+    const hasGlobal = scopes.has('global');
+    const hasLocal = scopes.has('local');
+    if (hasGlobal && hasLocal) return '전역+로컬';
+    return hasGlobal ? '전역' : '로컬';
+  };
+
+  if (byLocation.size === 1) {
+    const [loc, scopes] = byLocation.entries().next().value;
+    return `${loc} · ${scopesText(scopes)}`;
+  }
+  return Array.from(byLocation, ([loc, scopes]) => `${loc} ${scopesText(scopes)}`).join(' · ');
+}
+
+// Per-instance suffix for a multi-instance menu label ("· claude 로컬") so no
+// action is ambiguous about which filesystem copy it targets.
+function instanceSuffix(inst) {
+  return ` · ${inst.locationKey} ${scopeLabel(inst.scope)}`;
+}
+
+// One row per skill NAME. Same five columns as the old per-instance row, but the
+// subtitle, agent count, status, and menu all speak for the whole identity.
+function skillGroupRow(group) {
+  const { primary, instances } = group;
   // Per-project Claude Code applicability (a SEPARATE axis from enabled/disabled):
   // only the excluded state is called out, with a calm muted 제외됨 tag beside the
-  // name. Default 'on' / name-only / user-invocable-only / non-Claude skills show
-  // nothing here, keeping the list quiet.
-  const excludedFromClaude = s.claudeApplicability === 'off';
+  // name. The 가려짐 tag is intentionally gone — grouping unifies the shadowed
+  // global with its local sibling, and the subtitle conveys the layering factually.
+  const excludedFromClaude = group.claudeApplicability === 'off';
 
-  // 이름: bold name (+ inline 가려짐 / 제외됨 tags) over a mono locationKey:scope
-  // subtitle (reuses the docs 파일-cell pattern via the shared .cell-sub style).
+  // 이름: bold name (+ optional 제외됨 tag) over a factual layering subtitle. Full
+  // paths of every instance go in the title so nothing is hidden.
   const nameCell = el(
     'td',
     {},
     el(
       'div',
       { class: 'cell-title' },
-      s.name,
-      s.shadowed ? el('span', { class: 'badge badge-amber inline-tag', text: '가려짐' }) : null,
+      group.name,
       excludedFromClaude
         ? el('span', {
             class: 'badge badge-idle inline-tag',
@@ -1110,39 +1204,39 @@ function skillRow(s) {
           })
         : null,
     ),
-    el('div', { class: 'cell-sub', title: s.path, text: `${s.locationKey}:${s.scope}` }),
+    el('div', {
+      class: 'cell-sub',
+      title: instances.map((i) => i.path).join('\n'),
+      text: layerSummary(instances),
+    }),
   );
-  const isPlaceholder = !s.hasSkillMd || !s.description;
+
+  // 설명 / placeholder from the primary instance (same rule as before).
+  const isPlaceholder = !primary.hasSkillMd || !primary.description;
   const descCell = el('td', {
     class: isPlaceholder ? 'desc muted' : 'desc',
-    text: s.hasSkillMd ? s.description || '(설명 없음)' : '(SKILL.md 없음)',
+    text: primary.hasSkillMd ? primary.description || '(설명 없음)' : '(SKILL.md 없음)',
   });
-  // 에이전트: compact count pill (full list on hover); em-dash when disabled/empty.
+
+  // 에이전트: compact count pill over the UNION of visible agents (full list on
+  // hover); em-dash when nothing is enabled/visible.
   const visCell = el(
     'td',
     { 'data-label': '에이전트' },
-    s.enabled && s.visibleTo.length > 0
-      ? el('span', { class: 'badge badge-gray', title: s.visibleTo.join(', '), text: String(s.visibleTo.length) })
+    group.visibleTo.length > 0
+      ? el('span', {
+          class: 'badge badge-gray',
+          title: group.visibleTo.join(', '),
+          text: String(group.visibleTo.length),
+        })
       : emDash(),
   );
-  const statusCell = el('td', { 'data-label': '상태' }, s.enabled ? badge('활성', 'green') : badge('비활성', 'red'));
 
-  // Toggle stays inline (highest-frequency action + the e2e clicks it directly);
-  // 편집/복사/[적용·제외]/삭제 fold into the ⋯ menu, 삭제 danger and last. The
-  // applicability item appears ONLY for Claude-visible skills (claudeApplicability
-  // defined) and sits just above the destructive 삭제.
-  const menuItems = [
-    { label: '편집', onClick: () => editSkill(s) },
-    { label: '복사', onClick: () => copySkillModal(s) },
-  ];
-  if (s.claudeApplicability !== undefined) {
-    menuItems.push(
-      excludedFromClaude
-        ? { label: '이 프로젝트에 적용', onClick: () => toggleApplicability(s, 'on') }
-        : { label: '이 프로젝트에서 제외', onClick: () => toggleApplicability(s, 'off') },
-    );
-  }
-  menuItems.push({ label: '삭제', danger: true, onClick: () => deleteSkill(s) });
+  const statusCell = el(
+    'td',
+    { 'data-label': '상태' },
+    group.anyEnabled ? badge('활성', 'green') : badge('비활성', 'red'),
+  );
 
   const actions = el(
     'td',
@@ -1150,17 +1244,65 @@ function skillRow(s) {
     el(
       'div',
       { class: 'row-actions' },
+      // Inline toggle acts on the primary instance (highest-frequency action + the
+      // e2e clicks it directly).
       el('button', {
         class: 'btn btn-sm',
         type: 'button',
-        text: s.enabled ? '비활성' : '활성',
-        onclick: () => toggleSkill(s),
+        text: primary.enabled ? '비활성' : '활성',
+        onclick: () => toggleSkill(primary),
       }),
-      overflowMenu(menuItems),
+      overflowMenu(skillMenuItems(group)),
     ),
   );
 
   return el('tr', {}, nameCell, descCell, visCell, statusCell, actions);
+}
+
+// The ⋯ menu items for a skill group. A single instance keeps today's flat menu
+// (편집 / 복사 / [적용·제외] / 삭제); multiple instances label every per-instance
+// action with its scope+location, keep the shared applicability item once (per
+// NAME), and list destructive 삭제 items last.
+function skillMenuItems(group) {
+  const { instances, claudeApplicability } = group;
+  const excludedFromClaude = claudeApplicability === 'off';
+  const applicabilityItem =
+    claudeApplicability === undefined
+      ? null
+      : excludedFromClaude
+        ? { label: '이 프로젝트에 적용', onClick: () => toggleApplicability(group.primary, 'on') }
+        : { label: '이 프로젝트에서 제외', onClick: () => toggleApplicability(group.primary, 'off') };
+
+  if (instances.length === 1) {
+    const s = instances[0];
+    const items = [
+      { label: '편집', onClick: () => editSkill(s) },
+      { label: '복사', onClick: () => copySkillModal(s) },
+    ];
+    if (applicabilityItem) items.push(applicabilityItem);
+    items.push({ label: '삭제', danger: true, onClick: () => deleteSkill(s) });
+    return items;
+  }
+
+  // Multiple instances: group per instance so the menu reads copy-by-copy. Edit,
+  // toggle (its own label reflects that instance's state), and copy each carry a
+  // "· <loc> <scope>" suffix; the shared applicability item sits once between the
+  // per-instance actions and the destructive deletes.
+  const items = [];
+  for (const inst of instances) {
+    const suffix = instanceSuffix(inst);
+    items.push({ label: `편집${suffix}`, onClick: () => editSkill(inst) });
+    items.push({
+      label: `${inst.enabled ? '비활성' : '활성'}${suffix}`,
+      onClick: () => toggleSkill(inst),
+    });
+    items.push({ label: `복사${suffix}`, onClick: () => copySkillModal(inst) });
+  }
+  if (applicabilityItem) items.push(applicabilityItem);
+  for (const inst of instances) {
+    items.push({ label: `삭제${instanceSuffix(inst)}`, danger: true, onClick: () => deleteSkill(inst) });
+  }
+  return items;
 }
 
 async function toggleSkill(s) {
@@ -1341,10 +1483,14 @@ async function renderSkills(main) {
   statusFilter.setAttribute('aria-label', '상태 필터');
   const listToolbar = el('div', { class: 'toolbar' }, searchInput, statusFilter);
 
+  // Aggregate once (one group per NAME); filtering then operates on groups so each
+  // skill identity is a single filterable/rendered row.
+  const groups = groupSkillsByName(skills);
+
   // The body wrapper is stable; only its children swap when the filter changes.
   const listBody = el('div', { class: 'list-body' });
   const renderListBody = () => {
-    if (skills.length === 0) {
+    if (groups.length === 0) {
       listBody.replaceChildren(
         el(
           'div',
@@ -1355,12 +1501,12 @@ async function renderSkills(main) {
       );
       return;
     }
-    const visible = skills.filter(skillMatchesFilter);
+    const visible = groups.filter(skillMatchesFilter);
     listBody.replaceChildren(
       visible.length > 0
         ? tableWrap(
             ['이름', '설명', '에이전트', '상태', { text: '작업', cls: 'col-actions' }],
-            visible.map(skillRow),
+            visible.map(skillGroupRow),
           )
         : el('div', { class: 'empty', text: '검색 결과가 없습니다.' }),
     );
