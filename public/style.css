@@ -268,6 +268,23 @@ body {
   margin: 0;
 }
 
+/* One-line framing under a section header — a calm muted lead that frames what
+   the card's rows are (e.g. the docs layer sections). Sits above the flush
+   table, so it carries the card's own inset before the table bleeds to edges. */
+.section-lead {
+  margin: -4px 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 68ch;
+}
+/* The quieter "they combine" cue tucked under the lead — slightly smaller so it
+   reads as a secondary aside, not a second instruction. */
+.section-lead.subtle {
+  margin-top: -6px;
+  font-size: 12px;
+}
+
 .muted {
   color: var(--muted);
 }

@@ -1569,13 +1569,9 @@ function docRow(d, status) {
     el('div', { class: 'cell-title', text: d.label }),
     el('div', { class: 'cell-sub', title: d.path, text: shortenPath(d.path, status) }),
   );
-  const scopeCell = el(
-    'td',
-    { 'data-label': '스코프' },
-    d.scope === 'global' ? badge('global', 'gray') : badge('local', 'cyan'),
-  );
-  // Primary action stays inline; spokes fold 차이 보기 (first) and 링크/링크 해제
-  // into the ⋯ menu. Non-spoke rows have a single action and show no menu.
+  // Scope is now the section itself (이 프로젝트 / 전역 기본), so the per-row 스코프
+  // column is gone. Primary action stays inline; spokes fold 차이 보기 (first) and
+  // 링크/링크 해제 into the ⋯ menu. Non-spoke rows have a single action and no menu.
   const actions = el('div', { class: 'row-actions' });
   actions.append(
     d.exists
@@ -1608,7 +1604,6 @@ function docRow(d, status) {
     {},
     fileCell,
     el('td', { 'data-label': '상태' }, docStatusBadge(d)),
-    scopeCell,
     el(
       'td',
       { class: 'num', 'data-label': '크기' },
@@ -1792,6 +1787,38 @@ async function renderDocs(main) {
   const hubExists = Boolean(hub && hub.exists);
 
   const tools = (refreshTools && refreshTools.tools) || [];
+
+  // Layered guidance model: agents load global + project instructions TOGETHER, so
+  // present them as two labeled layers rather than one flat table keyed by a 스코프
+  // column. Partition by scope — 이 프로젝트 (local) first, 전역 기본 (global) next.
+  const projectDocs = docs.filter((d) => d.scope === 'local');
+  const globalDocs = docs.filter((d) => d.scope === 'global');
+
+  main.replaceChildren(
+    projectLayerSection(projectDocs, status, tools, hubExists),
+    globalLayerSection(globalDocs, status),
+  );
+}
+
+// Shared five-column doc table (파일 | 상태 | 크기 | 수정 | 작업), used by both
+// layer sections so the column set stays defined once.
+function docTable(rows, status) {
+  return tableWrap(
+    [
+      '파일',
+      '상태',
+      { text: '크기', cls: 'num' },
+      { text: '수정', cls: 'num' },
+      { text: '작업', cls: 'col-actions' },
+    ],
+    rows.map((d) => docRow(d, status)),
+  );
+}
+
+// 이 프로젝트 layer: the project-scoped docs (AGENTS.md hub + its spokes). Owns the
+// hub→spoke toolbar (허브 만들기? · AI로 허브 갱신 · 허브 → 전체 동기화) because those
+// are project-layer operations, plus the "they combine" cue.
+function projectLayerSection(projectDocs, status, tools, hubExists) {
   const toolSelect = refreshToolSelect(tools);
 
   // Toolbar: [허브 만들기?] · grouped [tool + AI 갱신] · separated primary sync.
@@ -1826,23 +1853,35 @@ async function renderDocs(main) {
     }),
   );
 
-  const section = el(
+  return el(
     'section',
     { class: 'section' },
-    el('div', { class: 'section-head' }, el('h2', { text: '문서' }), toolbar),
-    tableWrap(
-      [
-        '파일',
-        '상태',
-        '스코프',
-        { text: '크기', cls: 'num' },
-        { text: '수정', cls: 'num' },
-        { text: '작업', cls: 'col-actions' },
-      ],
-      docs.map((d) => docRow(d, status)),
-    ),
+    el('div', { class: 'section-head' }, el('h2', { text: '이 프로젝트' }), toolbar),
+    el('p', {
+      class: 'section-lead',
+      text: '이 프로젝트에만 적용되는 지시문. AGENTS.md 허브에서 각 도구 파일로 동기화됩니다.',
+    }),
+    el('p', {
+      class: 'section-lead subtle',
+      text: '전역 기본과 이 프로젝트 지시문은 함께 적용됩니다.',
+    }),
+    docTable(projectDocs, status),
   );
-  main.replaceChildren(section);
+}
+
+// 전역 기본 layer: the per-agent global instruction files that apply across every
+// project. No toolbar — these are just edited/created in place.
+function globalLayerSection(globalDocs, status) {
+  return el(
+    'section',
+    { class: 'section' },
+    el('div', { class: 'section-head' }, el('h2', { text: '전역 기본' })),
+    el('p', {
+      class: 'section-lead',
+      text: '모든 프로젝트에 함께 적용되는 내 기본 지시문.',
+    }),
+    docTable(globalDocs, status),
+  );
 }
 
 // ---- shell ----
