@@ -22,6 +22,12 @@
   --badge-cyan-fg: #0e7490;
   --badge-red-bg: #fee2e2;
   --badge-red-fg: #b91c1c;
+
+  --skeleton-base: #e9edf1;
+  --skeleton-sheen: #f4f6f9;
+
+  --diff-add-bg: #dcfce7;
+  --diff-del-bg: #fee2e2;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -49,6 +55,12 @@
     --badge-cyan-fg: #67e8f9;
     --badge-red-bg: #7f1d1d44;
     --badge-red-fg: #fca5a5;
+
+    --skeleton-base: #222a35;
+    --skeleton-sheen: #2c3542;
+
+    --diff-add-bg: #14532d40;
+    --diff-del-bg: #7f1d1d40;
   }
 }
 
@@ -214,19 +226,26 @@ body {
 }
 
 /* Tables bleed to the card edges so they read as one flush surface, with the
-   first/last cells re-inset to the card's 16px padding grid. */
-.section > .table-wrap {
+   first/last cells re-inset to the card's 16px padding grid. The skills list
+   nests its table in a .list-body wrapper (so the filter can swap only the
+   table); that wrapper gets the same bleed treatment. */
+.section > .table-wrap,
+.section > .list-body > .table-wrap {
   margin: 0 -16px -16px;
   border-top: 1px solid var(--border);
 }
 
 .section > .table-wrap th:first-child,
-.section > .table-wrap td:first-child {
+.section > .table-wrap td:first-child,
+.section > .list-body > .table-wrap th:first-child,
+.section > .list-body > .table-wrap td:first-child {
   padding-left: 16px;
 }
 
 .section > .table-wrap th:last-child,
-.section > .table-wrap td:last-child {
+.section > .table-wrap td:last-child,
+.section > .list-body > .table-wrap th:last-child,
+.section > .list-body > .table-wrap td:last-child {
   padding-right: 16px;
 }
 
@@ -266,6 +285,15 @@ td.wrap {
   min-width: 184px;
 }
 
+/* The flexible column of a table: it soaks up the leftover width while the
+   other columns hug their content (default th/td is nowrap). Used for the
+   skills 설명 and the docs 파일 cells. */
+td.desc {
+  white-space: normal;
+  width: 100%;
+  min-width: 260px;
+}
+
 .num {
   font-variant-numeric: tabular-nums;
 }
@@ -282,12 +310,13 @@ td.col-actions {
   width: 1%;
 }
 
-/* docs "파일" cell: strong filename over a shortened, ellipsised path */
-.doc-file {
+/* Two-line table cell: a strong title over a muted mono subtitle. Shared by the
+   skills 이름 cell (locationKey:scope) and the docs 파일 cell (shortened path). */
+.cell-title {
   font-weight: 600;
 }
 
-.doc-path {
+.cell-sub {
   display: block;
   margin-top: 1px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -474,6 +503,13 @@ textarea:focus {
   height: 32px;
 }
 
+/* skills list search box: grows on wide toolbars, caps so it never dominates */
+.search-input {
+  min-width: 180px;
+  max-width: 280px;
+  flex: 1 1 200px;
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -614,33 +650,68 @@ textarea:focus {
   line-height: 1.5;
 }
 
-.diff-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+/* ---- unified line diff (single column: old = spoke, new = hub) ---- */
+
+.diff-legend {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
 }
 
-@media (max-width: 640px) {
-  .diff-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.diff-col h4 {
-  margin: 0 0 6px;
-  font-size: 13px;
-}
-
-.diff-col pre {
-  margin: 0;
-  padding: 10px;
-  background: var(--panel-2);
+/* Scroll container: long lines scroll inside here, never the page. */
+.diff {
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: auto;
   max-height: 60vh;
+  background: var(--panel-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Each line is a <div> (not <pre>) so backgrounds color per row. */
+.diff-line {
+  display: flex;
+  align-items: flex-start;
+}
+
+.diff-line.ctx {
+  background: transparent;
+}
+.diff-line.add {
+  background: var(--diff-add-bg);
+}
+.diff-line.del {
+  background: var(--diff-del-bg);
+}
+
+.diff-gutter {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 0 8px;
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+  border-right: 1px solid var(--border);
+}
+
+.diff-no {
+  display: inline-block;
+  min-width: 2.5ch;
+}
+
+.diff-mark {
+  flex: none;
+  width: 1.5ch;
+  padding-left: 6px;
+  color: var(--muted);
+  user-select: none;
+}
+
+.diff-text {
+  flex: 1;
+  padding-right: 8px;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -671,10 +742,328 @@ textarea:focus {
   padding: 12px 0;
 }
 
+/* Friendlier empty state (skills list with zero skills): title + a hint line. */
+.empty-state {
+  padding: 20px 0;
+}
+
+.empty-title {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+
 .inline-tag {
   margin-left: 6px;
 }
 
+/* ---- first-run onboarding hero ---- */
+
+.onboard {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, var(--badge-blue-bg), var(--panel));
+}
+
+.onboard-lead {
+  margin: -4px 0 14px;
+}
+
+.onboard-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.onboard-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.onboard-num {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 700;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.onboard-body {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.onboard-step-title {
+  font-weight: 600;
+}
+
 .mb-10 {
   margin-bottom: 10px;
+}
+
+/* ---- skeleton loader ---- */
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skeleton-row {
+  height: 16px;
+  border-radius: 6px;
+  background: var(--skeleton-base);
+  background-image: linear-gradient(
+    90deg,
+    var(--skeleton-base) 0%,
+    var(--skeleton-sheen) 50%,
+    var(--skeleton-base) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.3s ease-in-out infinite;
+}
+
+/* Stagger widths so the placeholder reads as text rows, not solid bars. */
+.skeleton-row:nth-child(1) {
+  width: 45%;
+}
+.skeleton-row:nth-child(3) {
+  width: 92%;
+}
+.skeleton-row:nth-child(4) {
+  width: 78%;
+}
+.skeleton-row:nth-child(5) {
+  width: 60%;
+}
+
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-row {
+    animation: none;
+  }
+}
+
+/* ---- error panel (view-level load failure, distinct from transient toasts) ---- */
+
+.error-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--badge-red-fg);
+  border-radius: 8px;
+  background: var(--badge-red-bg);
+}
+
+.error-glyph {
+  font-size: 20px;
+  line-height: 1;
+  color: var(--badge-red-fg);
+  flex: none;
+}
+
+.error-message {
+  flex: 1;
+  color: var(--text);
+}
+
+/* ---- confirm dialog body ---- */
+
+.confirm-message {
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* ---- shared editor: textarea + line-number gutter ---- */
+
+.editor {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--panel-2);
+}
+
+/* Gutter and textarea must share font + line-height + vertical padding so the
+   line numbers line up with the text rows. */
+.editor-gutter,
+.editor .editor-area {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  padding-block: 6px;
+}
+
+.editor-gutter {
+  flex: none;
+  overflow: hidden;
+  padding-inline: 8px;
+  text-align: right;
+  color: var(--muted);
+  background: var(--panel-2);
+  border-right: 1px solid var(--border);
+  user-select: none;
+}
+
+.editor-lineno {
+  min-width: 2ch;
+}
+
+/* Inside .editor the textarea drops its own chrome; the wrapper owns the border. */
+.editor .editor-area {
+  flex: 1;
+  min-height: 380px;
+  resize: vertical;
+  border: none;
+  border-radius: 0;
+  padding-inline: 10px;
+  background: var(--panel);
+}
+
+.editor .editor-area:focus {
+  outline: none;
+}
+
+.editor:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* the standalone editor textarea (if ever used outside .editor) still fills width */
+.editor-area {
+  width: 100%;
+}
+
+/* ---- mobile: stack tables into cards (≤560px) ----
+   Same DOM (e2e selectors survive: rows stay countable <tr>s); only the layout
+   flips. Each <tr> becomes a card, thead is hidden, and every labeled <td>
+   prints its data-label. No horizontal PAGE scroll at this width. */
+@media (max-width: 560px) {
+  .table-wrap {
+    overflow-x: visible; /* cards stack vertically — nothing to scroll sideways */
+  }
+
+  /* Undo the desktop edge-bleed so cards sit inside normal card padding. */
+  .section > .table-wrap,
+  .section > .list-body > .table-wrap {
+    margin: 0;
+    border-top: none;
+  }
+  .section > .table-wrap th:first-child,
+  .section > .table-wrap td:first-child,
+  .section > .list-body > .table-wrap th:first-child,
+  .section > .list-body > .table-wrap td:first-child,
+  .section > .table-wrap th:last-child,
+  .section > .table-wrap td:last-child,
+  .section > .list-body > .table-wrap th:last-child,
+  .section > .list-body > .table-wrap td:last-child {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  table,
+  thead,
+  tbody,
+  tr,
+  td {
+    display: block;
+  }
+
+  /* Hide the header row without removing it from the DOM. */
+  thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  tbody tr {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+  tbody tr:last-child {
+    margin-bottom: 0;
+  }
+  tbody tr:hover {
+    background: var(--panel);
+  }
+
+  td {
+    border-bottom: none;
+    padding: 3px 0;
+    white-space: normal;
+  }
+  /* the last-child rule that strips borders is moot now (td has none) */
+
+  /* Labeled cells become a label→value row; the label comes from data-label. */
+  td[data-label] {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  td[data-label]::before {
+    content: attr(data-label);
+    flex: none;
+    min-width: 4.5em;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  /* Numeric cells left-align in card mode (right-alignment reads oddly here). */
+  td.num {
+    text-align: left;
+  }
+
+  /* Primary (unlabeled) cells span full width and read as the card title. */
+  td.desc {
+    min-width: 0;
+    width: auto;
+  }
+  .cell-sub {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  /* Actions cell: full-width, buttons wrap and left-align. */
+  td.col-actions {
+    width: auto;
+    text-align: left;
+    padding-top: 8px;
+  }
+  td.col-actions .row-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
 }
