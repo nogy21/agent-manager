@@ -25,6 +25,26 @@ function el(tag, props = {}, ...children) {
   return node;
 }
 
+// SVG sibling of el(): creates namespaced elements so the hub-and-spoke diagram
+// can be built with the same declarative style. Attributes go through
+// setAttribute (SVG has no className/textContent shortcuts we rely on); text
+// nodes are appended as-is. Security rule holds — never innerHTML, textContent
+// only via appended text nodes.
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, props = {}, ...children) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, String(v));
+  }
+  for (const child of children.flat(Infinity)) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
 function badge(text, cls) {
   return el('span', { class: `badge badge-${cls}`, text });
 }
@@ -90,11 +110,6 @@ function shortenPath(p, status) {
   return p;
 }
 
-// A link-styled button that switches to another tab (used by dashboard tips).
-function tabLink(text, tab) {
-  return el('button', { class: 'link', type: 'button', text, onclick: () => setTab(tab) });
-}
-
 function field(label, input) {
   return el('div', { class: 'field' }, el('label', { text: label }), input);
 }
@@ -135,14 +150,6 @@ function tableWrap(headers, rows) {
   );
 }
 
-function stat(label, value, tone) {
-  return el(
-    'div',
-    { class: 'stat' },
-    el('div', { class: 'label', text: label }),
-    el('div', { class: tone ? `value ${tone}` : 'value', text: value }),
-  );
-}
 
 // ---- formatting (mirrors src/docs/commands.ts) ----
 
@@ -340,148 +347,329 @@ function openEditorModal({ title, content, onSave }) {
   openModal({ title, body: editor, footer: [cancelBtn(), save], initialFocus: textarea });
 }
 
-// ---- dashboard view ----
+// ---- overview view (Mission Control home) ----
 
-function instructionBadge(state) {
-  const map = {
-    native: ['AGENTS.md ✓', 'green'],
-    'in-sync': ['동기화됨', 'green'],
-    linked: ['심링크 → AGENTS.md', 'cyan'],
-    diverged: ['불일치', 'amber'],
-    missing: ['파일 없음', 'gray'],
-    'no-hub': ['허브 없음', 'gray'],
-  };
-  const [text, cls] = map[state] || [state, 'gray'];
-  return badge(text, cls);
+// One source of truth for how an agent's instruction state maps to a color
+// bucket. The bucket name is both a CSS class suffix (.s-ok/.s-linked/…) and,
+// via STATE_COLOR, a concrete color for the SVG diagram (which can't use CSS
+// classes for stroke/fill as cleanly across themes). native/in-sync → healthy
+// green, linked → teal, diverged → amber, missing/no-hub → idle gray.
+function stateBucket(state) {
+  if (state === 'native' || state === 'in-sync') return 'ok';
+  if (state === 'linked') return 'linked';
+  if (state === 'diverged') return 'warn';
+  return 'idle'; // missing | no-hub | anything unexpected
+}
+
+// CSS custom properties resolved to values for SVG stroke/fill. Read live so
+// the diagram picks up the light/dark palette without duplicating hex codes.
+function stateColor(bucket) {
+  const varName = {
+    ok: '--state-ok',
+    linked: '--state-linked',
+    warn: '--state-warn',
+    idle: '--state-idle',
+  }[bucket];
+  return `var(${varName})`;
+}
+
+// Human label per bucket, reused by the fleet pill title and legend.
+const STATE_LABEL = { ok: '동기화됨', linked: '심링크', warn: '불일치', idle: '미설정' };
+
+// Build the hub-and-spoke SVG: a center AGENTS.md node with 6 agent nodes on a
+// circle around it, an edge to each. Edge + node stroke color come from the
+// agent's state bucket; undetected agents get a dashed edge and muted label.
+// Pure SVG via svgEl (textContent only) — teaches the hub→spoke model.
+function hubSpokeDiagram(agents) {
+  const W = 420;
+  const H = 300;
+  const cx = W / 2;
+  const cy = H / 2;
+  const radius = 104;
+  const nodeR = 22;
+
+  const svg = svgEl('svg', {
+    class: 'hub-diagram',
+    viewBox: `0 0 ${W} ${H}`,
+    role: 'img',
+    'aria-label': 'AGENTS.md 허브와 6개 에이전트의 연결 상태',
+  });
+
+  // Layout the 6 agents evenly. Start a touch past vertical (−80°) so no node
+  // lands exactly on the top axis where its label would fight the node.
+  const placed = agents.map((a, i) => {
+    const angle = (Math.PI * 2 * i) / agents.length - Math.PI / 2 + 0.18;
+    return { agent: a, x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
+  });
+
+  // Edges first so nodes paint on top of the line ends.
+  const edges = svgEl('g', {});
+  for (const p of placed) {
+    const bucket = stateBucket(p.agent.instruction.state);
+    edges.append(
+      svgEl('line', {
+        x1: cx,
+        y1: cy,
+        x2: p.x,
+        y2: p.y,
+        stroke: p.agent.detected ? stateColor(bucket) : 'var(--border-strong)',
+        'stroke-width': p.agent.detected ? 2 : 1.5,
+        'stroke-dasharray': p.agent.detected ? null : '4 4',
+        'stroke-linecap': 'round',
+        opacity: p.agent.detected ? 0.9 : 0.6,
+      }),
+    );
+  }
+  svg.append(edges);
+
+  // Agent nodes + outside labels.
+  for (const p of placed) {
+    const bucket = stateBucket(p.agent.instruction.state);
+    const color = p.agent.detected ? stateColor(bucket) : 'var(--state-idle)';
+    svg.append(
+      svgEl('circle', {
+        cx: p.x,
+        cy: p.y,
+        r: nodeR,
+        fill: 'var(--panel)',
+        stroke: color,
+        'stroke-width': 2,
+        'stroke-dasharray': p.agent.detected ? null : '4 4',
+      }),
+      svgEl('circle', { cx: p.x, cy: p.y, r: 4, fill: color }),
+    );
+    // Label is centered on the node's x and placed above (top half) or below
+    // (bottom half) so it never overlaps the node and stays within the wide
+    // viewBox band — cleaner than radial anchoring near the vertical axis.
+    const above = p.y < cy;
+    const ly = above ? p.y - nodeR - 8 : p.y + nodeR + 15;
+    svg.append(
+      svgEl(
+        'text',
+        {
+          x: p.x,
+          y: ly,
+          'text-anchor': 'middle',
+          'font-size': 11,
+          class: p.agent.detected ? 'diagram-node-label' : 'diagram-node-label idle',
+        },
+        p.agent.name,
+      ),
+    );
+  }
+
+  // Center hub: accent-tinted rounded rect with the AGENTS.md label.
+  const hubW = 112;
+  const hubH = 44;
+  svg.append(
+    svgEl('rect', {
+      x: cx - hubW / 2,
+      y: cy - hubH / 2,
+      width: hubW,
+      height: hubH,
+      rx: 10,
+      fill: 'var(--accent)',
+    }),
+    svgEl(
+      'text',
+      { x: cx, y: cy + 4, 'text-anchor': 'middle', 'font-size': 13, class: 'diagram-hub-label' },
+      'AGENTS.md',
+    ),
+  );
+
+  return svg;
+}
+
+// Derive the actionable to-do list from status. Each item carries its own
+// severity (drives the card's left accent) and a build() that renders the card.
+// Order: missing hub → diverged docs → starved agents → shadowed skills.
+function computeNeedsAttention(status) {
+  const items = [];
+
+  if (!status.hubExists) {
+    items.push({
+      severity: 'danger',
+      title: 'AGENTS.md 허브가 없습니다',
+      desc: '허브를 만들면 각 에이전트의 지시문을 한곳에서 관리할 수 있어요.',
+      actions: [{ text: '허브 만들기', primary: true, onClick: () => initDoc('agents') }],
+    });
+  }
+
+  for (const d of status.docs.filter((doc) => doc.sync === 'diverged')) {
+    items.push({
+      severity: 'danger',
+      title: `${d.label}가 허브와 불일치합니다`,
+      desc: '스포크 문서의 내용이 허브와 달라요. 차이를 확인하고 동기화하세요.',
+      actions: [
+        { text: '차이 보기', onClick: () => diffDoc(d) },
+        { text: '동기화', primary: true, onClick: () => syncAll() },
+      ],
+    });
+  }
+
+  for (const a of status.agents.filter((ag) => ag.detected && ag.skillCount === 0)) {
+    items.push({
+      severity: 'warn',
+      title: `${a.name}가 볼 수 있는 스킬이 없습니다`,
+      desc: '이 에이전트에 스킬을 연결하면 작업에 활용할 수 있어요.',
+      actions: [{ text: '스킬 연결', onClick: () => setTab('skills') }],
+    });
+  }
+
+  if (status.shadowedCount > 0) {
+    items.push({
+      severity: 'warn',
+      title: `가려진 전역 스킬 ${status.shadowedCount}개`,
+      desc: '같은 이름의 로컬 스킬이 전역 스킬을 가리고 있어요.',
+      actions: [{ text: '살펴보기', onClick: () => setTab('skills') }],
+    });
+  }
+
+  return items;
+}
+
+function attentionCard(item) {
+  const actions = el(
+    'div',
+    { class: 'attn-actions' },
+    ...item.actions.map((a) =>
+      el('button', {
+        class: a.primary ? 'btn primary' : 'btn',
+        type: 'button',
+        text: a.text,
+        onclick: a.onClick,
+      }),
+    ),
+  );
+  return el(
+    'div',
+    { class: `attn-card sev-${item.severity}` },
+    el(
+      'div',
+      { class: 'attn-text' },
+      el('div', { class: 'attn-title', text: item.title }),
+      el('div', { class: 'attn-desc', text: item.desc }),
+    ),
+    actions,
+  );
+}
+
+// Compact one-per-agent strip: color dot + name + skill count. Undetected
+// agents render muted/dashed with "미설정". Stable .fleet-agent hook for e2e.
+function fleetStrip(agents) {
+  return el(
+    'div',
+    { class: 'fleet-strip' },
+    ...agents.map((a) => {
+      const bucket = stateBucket(a.instruction.state);
+      const dotBucket = a.detected ? bucket : 'idle';
+      const meta = a.detected ? `스킬 ${a.skillCount}` : '미설정';
+      return el(
+        'div',
+        {
+          class: a.detected ? 'fleet-agent' : 'fleet-agent idle',
+          title: `${a.name} · ${STATE_LABEL[dotBucket]}`,
+        },
+        el('span', { class: `fleet-dot s-${dotBucket}`, 'aria-hidden': 'true' }),
+        el('span', { class: 'fleet-name', text: a.name }),
+        el('span', { class: 'fleet-meta', text: meta }),
+      );
+    }),
+  );
+}
+
+// The health hero: eyebrow + display-size statement (+ subtitle breakdown when
+// something needs attention) + legend, beside the hub-and-spoke diagram.
+function healthHero(status, attention) {
+  const n = attention.length;
+
+  const legend = el(
+    'div',
+    { class: 'health-legend' },
+    ...[
+      ['ok', '동기화됨'],
+      ['warn', '불일치'],
+      ['linked', '심링크'],
+      ['idle', '미설정'],
+    ].map(([bucket, label]) =>
+      el(
+        'span',
+        { class: 'legend-item' },
+        el('span', { class: `legend-dot s-${bucket}`, 'aria-hidden': 'true' }),
+        label,
+      ),
+    ),
+  );
+
+  let statement;
+  let subtitle = null;
+  if (n === 0) {
+    statement = el('h1', { class: 't-display health-statement ok', text: '모두 정상이에요' });
+  } else {
+    statement = el('h1', {
+      class: 't-display health-statement attn',
+      text: `${n}개 항목이 주의가 필요해요`,
+    });
+    // Break the count down by domain so the number is legible at a glance.
+    const hubN = status.hubExists ? 0 : 1;
+    const docN = status.docs.filter((d) => d.sync === 'diverged').length;
+    const skillN =
+      status.agents.filter((a) => a.detected && a.skillCount === 0).length +
+      (status.shadowedCount > 0 ? 1 : 0);
+    const parts = [];
+    if (hubN) parts.push(`허브 ${hubN}`);
+    if (docN) parts.push(`문서 ${docN}`);
+    if (skillN) parts.push(`스킬 ${skillN}`);
+    subtitle = el('p', { class: 'health-subtitle', text: parts.join(' · ') });
+  }
+
+  const copy = el(
+    'div',
+    { class: 'health-copy' },
+    el('div', { class: 'eyebrow', text: '시스템 상태' }),
+    statement,
+    subtitle,
+    legend,
+  );
+
+  return el(
+    'section',
+    { class: 'section raised' },
+    el('div', { class: 'health-hero' }, copy, hubSpokeDiagram(status.agents)),
+  );
 }
 
 async function renderDashboard(main) {
   const status = await api('GET', '/api/status');
-  setProjectPath(status.projectRoot);
+  setProjectPath(status.projectRoot, status);
 
-  const agentRows = status.agents.map((a) =>
-    el(
-      'tr',
-      {},
-      el('td', { text: a.name }),
-      el('td', { 'data-label': '감지' }, a.detected ? badge('감지됨', 'green') : badge('미감지', 'gray')),
-      el('td', { 'data-label': '지시문' }, instructionBadge(a.instruction.state)),
-      el('td', { class: 'num', 'data-label': '스킬', text: String(a.skillCount) }),
-    ),
+  const attention = computeNeedsAttention(status);
+
+  // Needs-attention: task cards, or a calm all-clear when the list is empty.
+  const attnBody =
+    attention.length > 0
+      ? el('div', { class: 'attn-list' }, ...attention.map(attentionCard))
+      : el(
+          'div',
+          { class: 'attn-clear' },
+          el('span', { class: 'attn-clear-glyph', 'aria-hidden': 'true', text: '✓' }),
+          '모든 문서가 동기화되어 있고 모든 에이전트에 스킬이 연결돼 있어요.',
+        );
+  const attnSection = el(
+    'section',
+    { class: 'section' },
+    el('h2', { text: '주의가 필요한 항목' }),
+    attnBody,
   );
-  const agentsSection = el(
+
+  const fleetSection = el(
     'section',
     { class: 'section' },
     el('h2', { text: '에이전트' }),
-    tableWrap(['에이전트', '감지', '지시문 상태', { text: '스킬 수', cls: 'num' }], agentRows),
+    fleetStrip(status.agents),
   );
 
-  const divergedDocs = status.docs.filter((d) => d.sync === 'diverged').length;
-  const enabledSkills = status.skills.filter((s) => s.enabled).length;
-  const summarySection = el(
-    'section',
-    { class: 'section' },
-    el('h2', { text: '요약' }),
-    el(
-      'div',
-      { class: 'summary-grid' },
-      stat('허브(AGENTS.md)', status.hubExists ? '정상' : '없음', status.hubExists ? 'ok' : 'bad'),
-      stat('불일치 문서', String(divergedDocs), divergedDocs > 0 ? 'warn' : null),
-      stat('활성 스킬', String(enabledSkills)),
-      stat('비활성 스킬', String(status.disabledCount)),
-    ),
-  );
-
-  const tipItems = [];
-  if (!status.hubExists) {
-    tipItems.push(
-      el('li', {}, 'AGENTS.md 허브가 없습니다. ', tabLink('문서 탭에서 허브 만들기', 'docs')),
-    );
-  }
-  if (divergedDocs > 0) {
-    tipItems.push(
-      el(
-        'li',
-        {},
-        `${divergedDocs}개 문서가 허브와 불일치합니다. `,
-        tabLink('문서 탭에서 동기화', 'docs'),
-      ),
-    );
-  }
-  const starved = status.agents.filter((a) => a.detected && a.skillCount === 0).map((a) => a.name);
-  if (starved.length > 0) {
-    tipItems.push(
-      el(
-        'li',
-        {},
-        '스킬이 없는 감지된 에이전트: ' + starved.join(', ') + '. ',
-        tabLink('스킬 탭 열기', 'skills'),
-      ),
-    );
-  }
-  if (status.shadowedCount > 0) {
-    tipItems.push(
-      el(
-        'li',
-        {},
-        `${status.shadowedCount}개 전역 스킬이 로컬 스킬에 가려져 있습니다. `,
-        tabLink('스킬 탭 열기', 'skills'),
-      ),
-    );
-  }
-  // First-run onboarding: a pristine project (no hub, no skills) gets a guided
-  // hero at the very top and skips the tips section — the hero already guides the
-  // user, so repeating "허브 없음" tips is redundant.
-  const pristine = !status.hubExists && status.skills.length === 0;
-  const sections = [agentsSection, summarySection];
-  if (pristine) {
-    sections.unshift(onboardingHero());
-  } else {
-    const tipsSection = el(
-      'section',
-      { class: 'section' },
-      el('h2', { text: '팁' }),
-      tipItems.length > 0
-        ? el('ul', { class: 'tips' }, ...tipItems)
-        : el('div', { class: 'muted', text: '특별한 문제가 없습니다.' }),
-    );
-    sections.push(tipsSection);
-  }
-
-  main.replaceChildren(...sections);
-}
-
-// Guided first-run card: three numbered steps, each with a jump to the tab that
-// gets it done.
-function onboardingHero() {
-  const step = (n, title, action) =>
-    el(
-      'li',
-      { class: 'onboard-step' },
-      el('span', { class: 'onboard-num', 'aria-hidden': 'true', text: String(n) }),
-      el(
-        'div',
-        { class: 'onboard-body' },
-        el('div', { class: 'onboard-step-title', text: title }),
-        action,
-      ),
-    );
-  return el(
-    'section',
-    { class: 'section onboard' },
-    el('h2', { text: 'agman 시작하기' }),
-    el('p', {
-      class: 'muted onboard-lead',
-      text: '세 단계로 문서 허브와 첫 스킬을 준비하세요.',
-    }),
-    el(
-      'ol',
-      { class: 'onboard-steps' },
-      step(1, 'AGENTS.md 허브 만들기', tabLink('문서 탭 열기', 'docs')),
-      step(2, '첫 스킬 만들기', tabLink('스킬 탭 열기', 'skills')),
-      step(3, '스포크 문서 동기화', tabLink('문서 탭 열기', 'docs')),
-    ),
-  );
+  main.replaceChildren(healthHero(status, attention), attnSection, fleetSection);
 }
 
 // ---- skills view ----
@@ -1043,7 +1231,7 @@ async function renderDocs(main) {
     api('GET', '/api/docs/refresh-tools'),
     api('GET', '/api/status'),
   ]);
-  setProjectPath(status.projectRoot);
+  setProjectPath(status.projectRoot, status);
   const hub = docs.find((d) => d.role === 'hub');
   const hubExists = Boolean(hub && hub.exists);
 
@@ -1106,9 +1294,19 @@ async function renderDocs(main) {
 const views = { dashboard: renderDashboard, skills: renderSkills, docs: renderDocs };
 let current = 'dashboard';
 
-function setProjectPath(p) {
+// Header chip. Show the project root as a home-relative path (~/projects/… over
+// a raw temp path) while keeping the absolute path in the tooltip. shortenPath
+// resolves projectRoot to '.', so for the chip we collapse home ourselves and
+// only fall back to shortenPath (→ <global>/…) for roots outside home.
+function setProjectPath(p, status) {
   const node = document.getElementById('project-path');
-  node.textContent = p || '';
+  let shown = p || '';
+  if (p && status) {
+    const { home } = status;
+    if (home && (p === home || p.startsWith(home + '/'))) shown = '~' + p.slice(home.length);
+    else shown = shortenPath(p, status);
+  }
+  node.textContent = shown;
   node.title = p || '';
 }
 

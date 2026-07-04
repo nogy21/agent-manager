@@ -1,66 +1,95 @@
+/* ── Design tokens ──────────────────────────────────────────────────────────
+   Calm, product-like surface: refined neutrals, one confident indigo accent,
+   hairline borders + a single raised-card shadow. Every token is defined in
+   BOTH the light block below and the dark @media block, and the semantic badge
+   pairs map to meanings (success/warn/danger/linked/hub/neutral) — the diagram
+   and cards read state off these, so light/dark stays coherent. */
 :root {
-  --bg: #f6f7f9;
+  --bg: #f7f8fa;
   --panel: #ffffff;
-  --panel-2: #fafbfc;
-  --text: #1c2430;
-  --muted: #66707c;
-  --border: #e2e6ea;
-  --border-strong: #cfd5db;
-  --accent: #2563eb;
+  --panel-2: #f3f5f8;
+  --text: #14181f;
+  --muted: #59616e;
+  --border: #e7e9ee;
+  --border-strong: #d2d7df;
+  --accent: #4f46e5;
+  --accent-weak: #eef0fc;
   --accent-text: #ffffff;
-  --row-hover: #f2f5f9;
+  --row-hover: #f3f5f8;
 
-  --badge-blue-bg: #dbeafe;
-  --badge-blue-fg: #1d4ed8;
-  --badge-green-bg: #dcfce7;
-  --badge-green-fg: #15803d;
-  --badge-amber-bg: #fef3c7;
-  --badge-amber-fg: #b45309;
-  --badge-gray-bg: #e9edf1;
-  --badge-gray-fg: #58626e;
-  --badge-cyan-bg: #cffafe;
-  --badge-cyan-fg: #0e7490;
-  --badge-red-bg: #fee2e2;
-  --badge-red-fg: #b91c1c;
+  /* hub = accent/indigo, linked = teal, cyan aliases linked for local scope */
+  --badge-blue-bg: #eaeafc;
+  --badge-blue-fg: #4338ca;
+  --badge-green-bg: #dcf6e5;
+  --badge-green-fg: #067647;
+  --badge-amber-bg: #fdf0d5;
+  --badge-amber-fg: #a35b06;
+  --badge-gray-bg: #edeff3;
+  --badge-gray-fg: #545c69;
+  --badge-cyan-bg: #d3f3ee;
+  --badge-cyan-fg: #0f766e;
+  --badge-red-bg: #fde4e4;
+  --badge-red-fg: #c4322b;
+
+  /* Semantic state color aliases — the fleet dots, diagram nodes/edges, and the
+     health legend derive their color from a single state → hue mapping. */
+  --state-ok: #12a150;
+  --state-linked: #0f9d90;
+  --state-warn: #d68000;
+  --state-idle: #99a1ac;
 
   --skeleton-base: #e9edf1;
   --skeleton-sheen: #f4f6f9;
 
-  --diff-add-bg: #dcfce7;
-  --diff-del-bg: #fee2e2;
+  --diff-add-bg: #dcf6e5;
+  --diff-del-bg: #fde4e4;
+
+  --shadow-card: 0 1px 2px rgba(20, 24, 31, 0.04), 0 4px 16px rgba(20, 24, 31, 0.06);
+
+  --radius-card: 12px;
+  --radius-control: 8px;
+  --radius-pill: 999px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f1319;
-    --panel: #171c24;
-    --panel-2: #1c222b;
-    --text: #e6eaef;
-    --muted: #97a1ad;
-    --border: #262d38;
-    --border-strong: #333c49;
-    --accent: #3b82f6;
-    --accent-text: #ffffff;
-    --row-hover: #1e2530;
+    --bg: #0c0f14;
+    --panel: #14181f;
+    --panel-2: #1a1f28;
+    --text: #eef1f5;
+    --muted: #a3adba;
+    --border: #232a34;
+    --border-strong: #323b47;
+    --accent: #7c74f0;
+    --accent-weak: #232043;
+    --accent-text: #0c0f14;
+    --row-hover: #1a1f28;
 
-    --badge-blue-bg: #1e3a8a44;
-    --badge-blue-fg: #93c5fd;
-    --badge-green-bg: #14532d44;
-    --badge-green-fg: #86efac;
-    --badge-amber-bg: #78350f44;
-    --badge-amber-fg: #fcd34d;
-    --badge-gray-bg: #33415544;
-    --badge-gray-fg: #b6bfca;
-    --badge-cyan-bg: #164e6344;
-    --badge-cyan-fg: #67e8f9;
-    --badge-red-bg: #7f1d1d44;
-    --badge-red-fg: #fca5a5;
+    --badge-blue-bg: #26224a;
+    --badge-blue-fg: #b9b4fb;
+    --badge-green-bg: #0f3323;
+    --badge-green-fg: #6ee7a8;
+    --badge-amber-bg: #3a2708;
+    --badge-amber-fg: #f6c261;
+    --badge-gray-bg: #2a323d;
+    --badge-gray-fg: #c2cad4;
+    --badge-cyan-bg: #0d3833;
+    --badge-cyan-fg: #63dccb;
+    --badge-red-bg: #3d1a1a;
+    --badge-red-fg: #f5a29c;
+
+    --state-ok: #34d17f;
+    --state-linked: #35c9b8;
+    --state-warn: #f0ad4e;
+    --state-idle: #6b7480;
 
     --skeleton-base: #222a35;
     --skeleton-sheen: #2c3542;
 
-    --diff-add-bg: #14532d40;
-    --diff-del-bg: #7f1d1d40;
+    --diff-add-bg: #0f332340;
+    --diff-del-bg: #3d1a1a80;
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.36);
   }
 }
 
@@ -79,44 +108,91 @@ body {
     system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans KR', 'Apple SD Gothic Neo',
     sans-serif;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--text);
   background: var(--bg);
+  -webkit-font-smoothing: antialiased;
   overflow-x: hidden; /* wide tables scroll inside their .table-wrap, never the page */
 }
 
+/* ── Type scale ──────────────────────────────────────────────────────────────
+   Only two weights (400 body, 500 emphasis) — the redesign leans on size and
+   spacing, not boldness. Muted contrast is raised (var --muted) for AA on small
+   text. Utility classes so the Overview reads consistently. */
+.t-display {
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+.t-section {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.t-card {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.t-body {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.55;
+}
+.t-small {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.t-micro {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
 .app-header {
-  max-width: 1100px;
+  max-width: 1040px;
   margin: 0 auto;
-  padding: 20px 20px 8px;
+  padding: 24px 24px 12px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
   flex-wrap: wrap;
 }
 
 .brand {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
 }
 
+/* Project path as a subtle chip: shortened (~/…) and ellipsis-truncated so it
+   reads like a location, not a raw temp path. */
 .project-path {
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
-  max-width: 45vw;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--panel);
+  max-width: min(46vw, 360px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.project-path:empty {
+  display: none;
+}
 
 .tabs {
-  max-width: 1100px;
+  max-width: 1040px;
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 24px;
   display: flex;
-  gap: 4px;
+  gap: 2px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -126,11 +202,13 @@ body {
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 400;
   padding: 10px 14px;
   cursor: pointer;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
+  transition: color 0.12s ease;
 }
 
 .tab:hover {
@@ -138,7 +216,8 @@ body {
 }
 
 .tab.active {
-  color: var(--accent);
+  color: var(--text);
+  font-weight: 500;
   border-bottom-color: var(--accent);
 }
 
@@ -149,24 +228,29 @@ body {
 }
 
 .main {
-  max-width: 1100px;
+  max-width: 1040px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 24px;
 }
 
 .section {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 16px;
+  border-radius: var(--radius-card);
+  padding: 18px;
   margin-bottom: 16px;
   overflow: hidden; /* clip flush tables to the rounded corners */
 }
 
+/* Raised variant for the Overview hero — hairline plus one soft shadow. */
+.section.raised {
+  box-shadow: var(--shadow-card);
+}
+
 .section h2 {
-  margin: 0 0 12px;
+  margin: 0 0 14px;
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .section-head {
@@ -266,7 +350,7 @@ td {
 
 th {
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 500;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -313,7 +397,7 @@ td.col-actions {
 /* Two-line table cell: a strong title over a muted mono subtitle. Shared by the
    skills 이름 cell (locationKey:scope) and the docs 파일 cell (shortened path). */
 .cell-title {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .cell-sub {
@@ -371,24 +455,28 @@ td.col-actions {
   appearance: none;
   font: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   height: 32px;
   padding: 0 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   border: 1px solid var(--border-strong);
-  background: var(--panel-2);
+  background: var(--panel);
   color: var(--text);
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--border-strong);
+  background: var(--panel-2);
 }
 
 .btn:focus-visible {
@@ -397,8 +485,8 @@ td.col-actions {
 }
 
 .btn-sm {
-  height: 26px;
-  padding: 0 8px;
+  height: 28px;
+  padding: 0 10px;
   font-size: 12px;
   border-radius: 6px;
 }
@@ -468,7 +556,7 @@ td.col-actions {
 .field label {
   font-size: 11px;
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.02em;
 }
 
@@ -477,7 +565,7 @@ select,
 textarea {
   font: inherit;
   color: var(--text);
-  background: var(--panel-2);
+  background: var(--panel);
   border: 1px solid var(--border-strong);
   border-radius: 7px;
   padding: 6px 8px;
@@ -508,55 +596,6 @@ textarea:focus {
   min-width: 180px;
   max-width: 280px;
   flex: 1 1 200px;
-}
-
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
-}
-
-.stat {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
-}
-
-.stat .label {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-}
-
-.stat .value {
-  font-size: 22px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  margin-top: 2px;
-}
-
-.stat .value.ok {
-  color: var(--badge-green-fg);
-}
-
-.stat .value.bad {
-  color: var(--badge-red-fg);
-}
-
-.stat .value.warn {
-  color: var(--badge-amber-fg);
-}
-
-.tips {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--muted);
-}
-
-.tips li {
-  margin: 4px 0;
 }
 
 /* ---- toasts ---- */
@@ -749,7 +788,7 @@ textarea:focus {
 
 .empty-title {
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
   font-size: 14px;
   margin-bottom: 2px;
 }
@@ -758,58 +797,247 @@ textarea:focus {
   margin-left: 6px;
 }
 
-/* ---- first-run onboarding hero ---- */
-
-.onboard {
-  border-color: var(--accent);
-  background: linear-gradient(180deg, var(--badge-blue-bg), var(--panel));
+.mb-10 {
+  margin-bottom: 10px;
 }
 
-.onboard-lead {
-  margin: -4px 0 14px;
+/* ── Overview (Mission Control home) ────────────────────────────────────────── */
+
+/* A small caps section label sitting above hero/section content. */
+.eyebrow {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 0 0 10px;
 }
 
-.onboard-steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* Hero: health statement (left) beside the hub-and-spoke diagram (right). */
+.health-hero {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: 24px;
+  align-items: center;
+}
+
+.health-copy {
+  min-width: 0;
+}
+
+.health-statement {
+  margin: 0;
+  color: var(--text);
+}
+.health-statement.ok {
+  color: var(--state-ok);
+}
+.health-statement.attn {
+  color: var(--text);
+}
+
+.health-subtitle {
+  margin: 10px 0 0;
+  color: var(--muted);
+  max-width: 46ch;
+}
+
+/* Legend row: color dot + label pairs decoding the diagram/fleet states. */
+.health-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 16px;
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* State → color: shared by legend dots, fleet dots, and (via JS) the diagram. */
+.s-ok {
+  background: var(--state-ok);
+}
+.s-linked {
+  background: var(--state-linked);
+}
+.s-warn {
+  background: var(--state-warn);
+}
+.s-idle {
+  background: var(--state-idle);
+}
+
+/* Hub-and-spoke diagram wrapper: SVG scales to the column, viewBox drives ratio. */
+.hub-diagram {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.hub-diagram text {
+  fill: var(--text);
+  font-family: inherit;
+}
+.hub-diagram .diagram-hub-label {
+  fill: var(--accent-text);
+  font-weight: 500;
+}
+.hub-diagram .diagram-node-label {
+  fill: var(--muted);
+}
+.hub-diagram .diagram-node-label.idle {
+  fill: var(--state-idle);
+}
+
+/* Needs-attention: a stack of task cards, each with a left severity accent. */
+.attn-list {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 
-.onboard-step {
+.attn-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--state-idle);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+}
+.attn-card.sev-danger {
+  border-left-color: var(--badge-red-fg);
+}
+.attn-card.sev-warn {
+  border-left-color: var(--state-warn);
+}
+
+.attn-text {
+  flex: 1;
+  min-width: 0;
+}
+.attn-title {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+}
+.attn-desc {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.attn-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* Bigger touch targets on the task cards than the dense table row buttons. */
+.attn-actions .btn {
+  height: 38px;
+  padding: 0 14px;
+}
+
+/* Calm success state shown when nothing needs attention. */
+.attn-clear {
   display: flex;
   align-items: center;
   gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 14px;
 }
-
-.onboard-num {
+.attn-clear-glyph {
   flex: none;
-  width: 26px;
-  height: 26px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--accent-text);
-  font-weight: 700;
-  font-size: 13px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--badge-green-bg);
+  color: var(--badge-green-fg);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  font-size: 14px;
 }
 
-.onboard-body {
+/* Fleet strip: one compact pill per agent — dot · name · skill count. */
+.fleet-strip {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
   flex-wrap: wrap;
+  gap: 8px;
+}
+.fleet-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--panel);
+  font-size: 13px;
+}
+.fleet-agent.idle {
+  border-style: dashed;
+  color: var(--muted);
+}
+.fleet-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.fleet-name {
+  font-weight: 500;
+  color: var(--text);
+}
+.fleet-agent.idle .fleet-name {
+  font-weight: 400;
+  color: var(--muted);
+}
+.fleet-meta {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.onboard-step-title {
-  font-weight: 600;
+/* Below ~720px the diagram drops under the statement so neither cramps. */
+@media (max-width: 720px) {
+  .health-hero {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .hub-diagram {
+    max-width: 380px;
+    margin: 0 auto;
+  }
 }
 
-.mb-10 {
-  margin-bottom: 10px;
+@media (max-width: 560px) {
+  .attn-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .attn-actions {
+    justify-content: flex-start;
+  }
+  .attn-actions .btn {
+    flex: 1 1 auto;
+  }
 }
 
 /* ---- skeleton loader ---- */
@@ -1035,7 +1263,7 @@ textarea:focus {
     min-width: 4.5em;
     color: var(--muted);
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 500;
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
